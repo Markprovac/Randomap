@@ -62,7 +62,7 @@
   const ui = {
     locateBtn: $('locateBtn'), installBtn: $('installBtn'), gpsBadge: $('gpsBadge'),
     radarToggle: $('radarToggle'), radarPanel: $('radarPanel'), radarSlider: $('radarSlider'), radarPlay: $('radarPlay'), radarTime: $('radarTime'),
-    mapWrap: $('mapWrap'), mapCloseBtn: $('mapCloseBtn'), mapLocateBtn: $('mapLocateBtn'), mapExpandHint: $('mapExpandHint'),
+    mapWrap: $('mapWrap'), mapCloseBtn: $('mapCloseBtn'), mapLocateBtn: $('mapLocateBtn'), mapZoomControls: $('mapZoomControls'), mapZoomInBtn: $('mapZoomInBtn'), mapZoomOutBtn: $('mapZoomOutBtn'), mapExpandHint: $('mapExpandHint'),
     tempNow: $('tempNow'), rainNow: $('rainNow'), gustNow: $('gustNow'), feelNow: $('feelNow'), elevationNow: $('elevationNow'), weatherIcon: $('weatherIcon'),
     alertCard: $('alertCard'), alertIcon: $('alertIcon'), alertTitle: $('alertTitle'), alertText: $('alertText'),
     gpxInput: $('gpxInput'), analyzeBtn: $('analyzeBtn'), routeCard: $('routeCard'), routeName: $('routeName'), routeDistance: $('routeDistance'), routeGain: $('routeGain'), routeLoss: $('routeLoss'), routeHigh: $('routeHigh'), routeForecast: $('routeForecast'), clearRouteBtn: $('clearRouteBtn'), exportRouteBtn: $('exportRouteBtn'),
@@ -111,6 +111,7 @@
     document.body.classList.add('map-fullscreen');
     ui.mapCloseBtn.classList.remove('hidden');
     ui.mapLocateBtn.classList.remove('hidden');
+    ui.mapZoomControls.classList.remove('hidden');
     syncActivityMapPanel();
     setTimeout(() => state.map.invalidateSize(), 50);
   }
@@ -121,6 +122,7 @@
     document.body.classList.remove('map-fullscreen');
     ui.mapCloseBtn.classList.add('hidden');
     ui.mapLocateBtn.classList.add('hidden');
+    ui.mapZoomControls.classList.add('hidden');
     syncActivityMapPanel();
     setTimeout(() => state.map.invalidateSize(), 50);
   }
@@ -1174,8 +1176,10 @@
     ui.radarSlider.addEventListener('input', e => showRadarFrame(Number(e.target.value)));
     ui.radarPlay.addEventListener('click', toggleRadarAnimation);
     ui.locateBtn.addEventListener('click', () => startLocation(true));
-    ui.mapLocateBtn.addEventListener('click', () => startLocation(true));
-    ui.mapCloseBtn.addEventListener('click', exitMapFullscreen);
+    ui.mapLocateBtn.addEventListener('click', e => { e.stopPropagation(); startLocation(true); });
+    ui.mapCloseBtn.addEventListener('click', e => { e.stopPropagation(); exitMapFullscreen(); });
+    ui.mapZoomInBtn.addEventListener('click', e => { e.stopPropagation(); state.map.zoomIn(); });
+    ui.mapZoomOutBtn.addEventListener('click', e => { e.stopPropagation(); state.map.zoomOut(); });
 
     ui.gpxInput.addEventListener('change', e => e.target.files?.[0] && importGpx(e.target.files[0]));
     ui.clearRouteBtn.addEventListener('click', clearRoute);

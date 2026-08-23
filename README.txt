@@ -23,3 +23,6 @@ Important :
 - La carte reste libre même pendant le suivi : elle ne se recentre que sur pression de ◎.
 - La géolocalisation et le Service Worker nécessitent HTTPS (ou localhost).
 - Les services publics de routage sont utilisés avec parcimonie et peuvent être indisponibles.
+
+
+Version 1.3.1 : correction plein écran mobile — bouton Fermer toujours visible + boutons +/− permanents en plein écran.

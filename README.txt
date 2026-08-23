@@ -1,3 +1,5 @@
+Rando Radar v1.4 — refonte visuelle mobile
+
 RANDO RADAR — V1.3
 ==================
 

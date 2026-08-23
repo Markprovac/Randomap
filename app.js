@@ -1222,6 +1222,50 @@
     ui.targetSelectBtn.addEventListener('click', beginTargetSelection);
     ui.targetClearBtn.addEventListener('click', () => clearActivityTarget(true));
 
+    // Navigation mobile v1.4
+    const navButtons = [...document.querySelectorAll('[data-nav]')];
+    const setActiveNav = name => navButtons.forEach(btn => btn.classList.toggle('active', btn.dataset.nav === name));
+    const scrollToElement = element => element?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    navButtons.forEach(btn => btn.addEventListener('click', () => {
+      const dest = btn.dataset.nav;
+      setActiveNav(dest);
+      if (dest === 'map') {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        return;
+      }
+      if (dest === 'activity') {
+        openActivityCard();
+        setTimeout(() => scrollToElement(ui.activityCard), 40);
+        return;
+      }
+      if (dest === 'routes') {
+        const target = !ui.savedRoutesCard.classList.contains('hidden') ? ui.savedRoutesCard : (!ui.routeCard.classList.contains('hidden') ? ui.routeCard : document.querySelector('.quick-actions'));
+        scrollToElement(target);
+        return;
+      }
+      if (dest === 'weather') {
+        scrollToElement(document.getElementById('forecastSection'));
+        return;
+      }
+      if (dest === 'info') {
+        scrollToElement(document.getElementById('infoSection'));
+      }
+    }));
+
+    document.querySelectorAll('[data-nav-action]').forEach(btn => btn.addEventListener('click', () => {
+      const action = btn.dataset.navAction;
+      if (action === 'activity') {
+        openActivityCard();
+        setActiveNav('activity');
+        setTimeout(() => scrollToElement(ui.activityCard), 40);
+      } else if (action === 'routes') {
+        setActiveNav('routes');
+        const target = !ui.savedRoutesCard.classList.contains('hidden') ? ui.savedRoutesCard : (!ui.routeCard.classList.contains('hidden') ? ui.routeCard : document.querySelector('.quick-actions'));
+        scrollToElement(target);
+      }
+    }));
+
     window.addEventListener('beforeinstallprompt', e => {
       e.preventDefault();
       state.deferredInstall = e;

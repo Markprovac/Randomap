@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#0f1720" />
+  <meta name="theme-color" content="#f7faf9" />
   <meta name="description" content="Rando Radar — carte topo, GPS, suivi d’activité, création et import GPX, radar pluie et météo du parcours." />
   <title>Rando Radar</title>
   <link rel="manifest" href="manifest.webmanifest" />
@@ -15,19 +15,26 @@
 </head>
 <body>
   <div id="app">
-    <header class="topbar">
-      <div>
-        <div class="eyebrow">RANDO & VÉLO</div>
-        <h1>Rando Radar</h1>
+    <header class="topbar" id="topSection">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">▲</div>
+        <div>
+          <div class="eyebrow">RANDO & VÉLO</div>
+          <h1>Rando Radar</h1>
+        </div>
       </div>
       <div class="top-actions">
+        <div class="weather-chip" aria-label="Météo actuelle">
+          <span id="weatherIcon" class="weather-icon">🌤️</span>
+          <strong><span id="tempNow">--</span>°</strong>
+        </div>
         <button id="installBtn" class="icon-btn hidden" aria-label="Installer l'application" title="Installer">⬇️</button>
-        <button id="locateBtn" class="icon-btn" aria-label="Me localiser" title="Me localiser">◎</button>
+        <button id="locateBtn" class="icon-btn locate-top" aria-label="Me localiser" title="Me localiser">◎</button>
       </div>
     </header>
 
     <main>
-      <section id="mapWrap" class="map-wrap">
+      <section id="mapWrap" class="map-wrap" aria-label="Carte">
         <div id="map" role="application" aria-label="Carte de randonnée"></div>
 
         <button id="mapCloseBtn" class="map-float-btn map-close-btn hidden" aria-label="Fermer la carte">✕ <span>Fermer</span></button>
@@ -36,7 +43,7 @@
           <button id="mapZoomInBtn" type="button" aria-label="Zoomer">+</button>
           <button id="mapZoomOutBtn" type="button" aria-label="Dézoomer">−</button>
         </div>
-        <div id="mapExpandHint" class="map-expand-hint">Touchez la carte pour l’agrandir</div>
+        <div id="mapExpandHint" class="map-expand-hint">↗ Plein écran</div>
 
         <div class="map-pills">
           <button class="pill active" data-basemap="topo">⛰️ Topo</button>
@@ -99,26 +106,33 @@
             <input id="radarSlider" type="range" min="0" max="0" value="0" step="1" />
             <span id="radarTime" class="radar-time">Radar…</span>
           </div>
-          <div class="radar-sub">Observations RainViewer — 2 dernières heures</div>
+          <div class="radar-sub">Radar observé · 2 dernières heures</div>
         </div>
       </section>
 
       <section class="dashboard">
-        <div class="summary-card">
-          <div class="summary-left">
-            <span id="weatherIcon" class="weather-icon">🌤️</span>
-            <div>
-              <div class="label">Maintenant</div>
-              <div class="temperature"><span id="tempNow">--</span>°</div>
-            </div>
-          </div>
-          <div class="summary-grid">
-            <div><span class="label">Pluie</span><strong id="rainNow">-- mm</strong></div>
-            <div><span class="label">Rafales</span><strong id="gustNow">-- km/h</strong></div>
-            <div><span class="label">Ressenti</span><strong id="feelNow">--°</strong></div>
-            <div><span class="label">Altitude</span><strong id="elevationNow">-- m</strong></div>
-          </div>
-        </div>
+        <section class="quick-actions" aria-label="Actions principales">
+          <label class="quick-button quick-gpx" for="gpxInput">
+            <span class="quick-icon">GPX</span>
+            <span>Importer GPX</span>
+          </label>
+          <input id="gpxInput" type="file" accept=".gpx,application/gpx+xml,application/xml,text/xml" hidden />
+
+          <button id="createRouteBtn" class="quick-button quick-route" type="button">
+            <span class="quick-icon">⌁＋</span>
+            <span>Créer parcours</span>
+          </button>
+
+          <button id="activityOpenBtn" class="quick-button quick-activity" type="button">
+            <span class="quick-icon">▶</span>
+            <span>Démarrer activité</span>
+          </button>
+
+          <button id="analyzeBtn" class="quick-button quick-weather" type="button" disabled>
+            <span class="quick-icon">☔</span>
+            <span>Analyser météo</span>
+          </button>
+        </section>
 
         <div id="alertCard" class="alert-card neutral">
           <div id="alertIcon" class="alert-icon">🧭</div>
@@ -128,30 +142,29 @@
           </div>
         </div>
 
-        <div class="action-grid">
-          <label class="action-card file-card" for="gpxInput">
-            <span class="action-icon">📥</span>
-            <span><strong>Importer GPX</strong><small>Afficher ton parcours</small></span>
-          </label>
-          <input id="gpxInput" type="file" accept=".gpx,application/gpx+xml,application/xml,text/xml" hidden />
+        <section class="overview-grid" id="weatherSection">
+          <article class="overview-card weather-overview">
+            <div class="overview-head"><span>Météo</span><span class="overview-badge">☁️</span></div>
+            <div class="metric-line"><span>Pluie</span><strong id="rainNow">-- mm</strong></div>
+            <div class="metric-line"><span>Rafales</span><strong id="gustNow">-- km/h</strong></div>
+            <div class="metric-line"><span>Ressenti</span><strong id="feelNow">--°</strong></div>
+            <div class="metric-line"><span>Altitude</span><strong id="elevationNow">-- m</strong></div>
+          </article>
 
-          <button id="createRouteBtn" class="action-card">
-            <span class="action-icon">✏️</span>
-            <span><strong>Créer un parcours</strong><small>Tracer sur les chemins</small></span>
-          </button>
+          <article class="overview-card activity-preview">
+            <div class="overview-head"><span>Activité</span><span class="overview-badge">🥾</span></div>
+            <p class="overview-copy">Enregistre ta trace GPS en direct, la distance, le temps et la vitesse.</p>
+            <button class="mini-action" type="button" data-nav-action="activity">Ouvrir le suivi</button>
+          </article>
 
-          <button id="activityOpenBtn" class="action-card">
-            <span class="action-icon">▶️</span>
-            <span><strong>Démarrer activité</strong><small>Trace GPS · rando ou vélo</small></span>
-          </button>
+          <article class="overview-card route-preview">
+            <div class="overview-head"><span>Parcours</span><span class="overview-badge">⛰️</span></div>
+            <p class="overview-copy">Importe un GPX ou crée ton itinéraire directement sur la carte.</p>
+            <button class="mini-action" type="button" data-nav-action="routes">Mes parcours</button>
+          </article>
+        </section>
 
-          <button id="analyzeBtn" class="action-card" disabled>
-            <span class="action-icon">🌦️</span>
-            <span><strong>Analyser parcours</strong><small>Météo sur le trajet</small></span>
-          </button>
-        </div>
-
-        <section id="activityCard" class="route-card hidden">
+        <section id="activityCard" class="route-card hidden" data-section="activity">
           <div class="section-head">
             <div>
               <div class="label">Suivi GPS</div>
@@ -176,7 +189,7 @@
           <p id="activityHelp" class="activity-help">Choisis randonnée ou vélo, puis démarre. La trace sera dessinée en direct sur la carte.</p>
         </section>
 
-        <section id="routeCard" class="route-card hidden">
+        <section id="routeCard" class="route-card hidden" data-section="routes">
           <div class="section-head">
             <div>
               <div class="label">Parcours chargé</div>
@@ -203,8 +216,7 @@
           <div id="routeForecast" class="route-forecast hidden"></div>
         </section>
 
-
-        <section id="savedRoutesCard" class="route-card hidden">
+        <section id="savedRoutesCard" class="route-card hidden" data-section="routes">
           <div class="section-head">
             <div>
               <div class="label">Bibliothèque locale</div>
@@ -214,7 +226,7 @@
           <div id="savedRoutesList" class="saved-routes-list"></div>
         </section>
 
-        <section class="forecast-card">
+        <section class="forecast-card" id="forecastSection" data-section="weather">
           <div class="section-head">
             <div>
               <div class="label">Prévision locale</div>
@@ -227,13 +239,21 @@
           </div>
         </section>
 
-        <section class="info-card">
-          <strong>Sources</strong>
+        <section class="info-card" id="infoSection">
+          <strong>À propos des données</strong>
           <p>Météo et altitude : Open‑Meteo / modèles Météo‑France AROME & ARPEGE / Copernicus DEM. Radar : RainViewer. Cartographie : OpenTopoMap et OpenStreetMap. Routage : OpenStreetMap/FOSSGIS OSRM.</p>
-          <p class="tiny">Le radar affiche des observations passées, pas une prévision radar future. Les prévisions restent des estimations : en montagne, vérifie aussi les vigilances et le ciel réel avant de partir.</p>
+          <p class="tiny">Le radar affiche des observations passées, pas une prévision radar future. En montagne, vérifie aussi les vigilances et les conditions réelles avant de partir.</p>
         </section>
       </section>
     </main>
+
+    <nav class="bottom-nav" aria-label="Navigation principale">
+      <button class="bottom-nav-btn active" type="button" data-nav="map"><span>🗺️</span><small>Carte</small></button>
+      <button class="bottom-nav-btn" type="button" data-nav="activity"><span>〽️</span><small>Activité</small></button>
+      <button class="bottom-nav-btn" type="button" data-nav="routes"><span>⌁</span><small>Parcours</small></button>
+      <button class="bottom-nav-btn" type="button" data-nav="weather"><span>☁️</span><small>Météo</small></button>
+      <button class="bottom-nav-btn" type="button" data-nav="info"><span>⚙️</span><small>Infos</small></button>
+    </nav>
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>

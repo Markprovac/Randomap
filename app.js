@@ -15,6 +15,7 @@
     locationMarker: null,
     accuracyCircle: null,
     watchId: null,
+    centerOnNextLocation: false,
     route: null,
     routeLine: null,
     routeMarkers: [],
@@ -125,10 +126,23 @@
       toast('La géolocalisation n’est pas disponible sur cet appareil.');
       return;
     }
+
+    // Le bouton de localisation recentre une seule fois la carte.
+    // Le suivi GPS continue ensuite sans déplacer la vue choisie par l’utilisateur.
+    if (center && state.location) {
+      const ll = [state.location.lat, state.location.lon];
+      state.map.setView(ll, Math.max(state.map.getZoom(), 13));
+      state.centerOnNextLocation = false;
+    } else if (center) {
+      state.centerOnNextLocation = true;
+    }
+
+    // Si le suivi GPS tourne déjà, inutile de le redémarrer.
+    if (state.watchId !== null) return;
+
     ui.gpsBadge.textContent = 'GPS : recherche…';
-    if (state.watchId !== null) navigator.geolocation.clearWatch(state.watchId);
     state.watchId = navigator.geolocation.watchPosition(
-      pos => updateLocation(pos, center),
+      pos => updateLocation(pos),
       err => {
         ui.gpsBadge.textContent = 'GPS : erreur';
         toast(err.code === 1 ? 'Autorise la localisation pour utiliser le GPS.' : 'Position GPS indisponible.');
@@ -137,7 +151,7 @@
     );
   }
 
-  function updateLocation(pos, center) {
+  function updateLocation(pos) {
     const { latitude, longitude, accuracy, altitude } = pos.coords;
     state.location = { lat: latitude, lon: longitude, accuracy, altitude };
     const ll = [latitude, longitude];
@@ -151,9 +165,9 @@
     }
     ui.gpsBadge.textContent = `GPS : ±${Math.round(accuracy || 0)} m`;
     if (altitude != null && Number.isFinite(altitude)) ui.elevationNow.textContent = `${Math.round(altitude)} m`;
-    if (center) {
+    if (state.centerOnNextLocation) {
       state.map.setView(ll, Math.max(state.map.getZoom(), 13));
-      center = false;
+      state.centerOnNextLocation = false;
     }
     scheduleWeather(latitude, longitude);
   }

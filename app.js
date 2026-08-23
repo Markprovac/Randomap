@@ -1181,6 +1181,18 @@
     ui.mapZoomInBtn.addEventListener('click', e => { e.stopPropagation(); state.map.zoomIn(); });
     ui.mapZoomOutBtn.addEventListener('click', e => { e.stopPropagation(); state.map.zoomOut(); });
 
+    // V1.4.1 : garde Leaflet parfaitement ajusté à la largeur réelle du smartphone.
+    const refreshMapSize = () => {
+      if (!state.map) return;
+      requestAnimationFrame(() => state.map.invalidateSize({ pan: false }));
+    };
+    window.addEventListener('resize', refreshMapSize, { passive: true });
+    window.addEventListener('orientationchange', () => setTimeout(refreshMapSize, 180), { passive: true });
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', refreshMapSize, { passive: true });
+    }
+    setTimeout(refreshMapSize, 120);
+
     ui.gpxInput.addEventListener('change', e => e.target.files?.[0] && importGpx(e.target.files[0]));
     ui.clearRouteBtn.addEventListener('click', clearRoute);
     ui.exportRouteBtn.addEventListener('click', exportCurrentRoute);

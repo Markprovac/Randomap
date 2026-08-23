@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f1720" />
+  <meta name="description" content="Rando Radar — carte topo, GPS, GPX, radar pluie et météo du parcours." />
+  <title>Rando Radar</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icon-192.png" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <link rel="preconnect" href="https://unpkg.com" crossorigin />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">RANDO & VÉLO</div>
+        <h1>Rando Radar</h1>
+      </div>
+      <div class="top-actions">
+        <button id="installBtn" class="icon-btn hidden" aria-label="Installer l'application" title="Installer">⬇️</button>
+        <button id="locateBtn" class="icon-btn" aria-label="Me localiser" title="Me localiser">◎</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="map-wrap">
+        <div id="map" role="application" aria-label="Carte de randonnée"></div>
+
+        <div class="map-pills">
+          <button class="pill active" data-basemap="topo">⛰️ Topo</button>
+          <button class="pill" data-basemap="osm">🗺️ Plan</button>
+          <button id="radarToggle" class="pill active">🌧️ Radar</button>
+        </div>
+
+        <div id="gpsBadge" class="gps-badge">GPS : inactif</div>
+
+        <div id="radarPanel" class="radar-panel">
+          <div class="radar-row">
+            <button id="radarPlay" class="radar-play" aria-label="Lire l'animation radar">▶</button>
+            <input id="radarSlider" type="range" min="0" max="0" value="0" step="1" />
+            <span id="radarTime" class="radar-time">Radar…</span>
+          </div>
+          <div class="radar-sub">Observations RainViewer — 2 dernières heures</div>
+        </div>
+      </section>
+
+      <section class="dashboard">
+        <div class="summary-card">
+          <div class="summary-left">
+            <span id="weatherIcon" class="weather-icon">🌤️</span>
+            <div>
+              <div class="label">Maintenant</div>
+              <div class="temperature"><span id="tempNow">--</span>°</div>
+            </div>
+          </div>
+          <div class="summary-grid">
+            <div><span class="label">Pluie</span><strong id="rainNow">-- mm</strong></div>
+            <div><span class="label">Rafales</span><strong id="gustNow">-- km/h</strong></div>
+            <div><span class="label">Ressenti</span><strong id="feelNow">--°</strong></div>
+            <div><span class="label">Altitude</span><strong id="elevationNow">-- m</strong></div>
+          </div>
+        </div>
+
+        <div id="alertCard" class="alert-card neutral">
+          <div id="alertIcon" class="alert-icon">🧭</div>
+          <div>
+            <strong id="alertTitle">Prêt pour la sortie</strong>
+            <p id="alertText">Active le GPS ou charge un fichier GPX pour analyser la météo.</p>
+          </div>
+        </div>
+
+        <div class="action-grid">
+          <label class="action-card file-card" for="gpxInput">
+            <span class="action-icon">📥</span>
+            <span><strong>Importer GPX</strong><small>Afficher ton parcours</small></span>
+          </label>
+          <input id="gpxInput" type="file" accept=".gpx,application/gpx+xml,application/xml,text/xml" hidden />
+
+          <button id="analyzeBtn" class="action-card" disabled>
+            <span class="action-icon">🌦️</span>
+            <span><strong>Analyser parcours</strong><small>Météo sur le trajet</small></span>
+          </button>
+        </div>
+
+        <section id="routeCard" class="route-card hidden">
+          <div class="section-head">
+            <div>
+              <div class="label">Parcours chargé</div>
+              <h2 id="routeName">Randonnée</h2>
+            </div>
+            <button id="clearRouteBtn" class="text-btn">Retirer</button>
+          </div>
+          <div class="stats-grid">
+            <div><span class="label">Distance</span><strong id="routeDistance">-- km</strong></div>
+            <div><span class="label">D+</span><strong id="routeGain">-- m</strong></div>
+            <div><span class="label">D-</span><strong id="routeLoss">-- m</strong></div>
+            <div><span class="label">Point haut</span><strong id="routeHigh">-- m</strong></div>
+          </div>
+          <div class="mode-row">
+            <span class="label">Allure estimée</span>
+            <div class="segmented" role="group" aria-label="Mode de déplacement">
+              <button class="mode-btn active" data-mode="hike">🥾 Rando · 4 km/h</button>
+              <button class="mode-btn" data-mode="bike">🚴 Vélo · 20 km/h</button>
+            </div>
+          </div>
+          <div id="routeForecast" class="route-forecast hidden"></div>
+        </section>
+
+        <section class="forecast-card">
+          <div class="section-head">
+            <div>
+              <div class="label">Prévision locale</div>
+              <h2>Prochaines heures</h2>
+            </div>
+            <button id="refreshWeatherBtn" class="text-btn">Actualiser</button>
+          </div>
+          <div id="hourlyForecast" class="hourly-scroll">
+            <div class="skeleton">Active le GPS pour afficher la météo.</div>
+          </div>
+        </section>
+
+        <section class="info-card">
+          <strong>Sources</strong>
+          <p>Météo : Open‑Meteo / modèles Météo‑France AROME & ARPEGE. Radar : RainViewer. Cartographie : OpenTopoMap et OpenStreetMap.</p>
+          <p class="tiny">Le radar affiche des observations passées, pas une prévision radar future. Les prévisions restent des estimations : en montagne, vérifie aussi les vigilances et le ciel réel avant de partir.</p>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script src="app.js"></script>
+</body>
+</html>

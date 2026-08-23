@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#0f1720" />
-  <meta name="description" content="Rando Radar — carte topo, GPS, GPX, radar pluie et météo du parcours." />
+  <meta name="description" content="Rando Radar — carte topo, GPS, suivi d’activité, création et import GPX, radar pluie et météo du parcours." />
   <title>Rando Radar</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" href="icon-192.png" />
@@ -27,8 +27,12 @@
     </header>
 
     <main>
-      <section class="map-wrap">
+      <section id="mapWrap" class="map-wrap">
         <div id="map" role="application" aria-label="Carte de randonnée"></div>
+
+        <button id="mapCloseBtn" class="map-float-btn map-close-btn hidden" aria-label="Fermer la carte">✕ <span>Fermer</span></button>
+        <button id="mapLocateBtn" class="map-float-btn map-locate-btn hidden" aria-label="Recentrer sur ma position">◎</button>
+        <div id="mapExpandHint" class="map-expand-hint">Touchez la carte pour l’agrandir</div>
 
         <div class="map-pills">
           <button class="pill active" data-basemap="topo">⛰️ Topo</button>
@@ -37,6 +41,53 @@
         </div>
 
         <div id="gpsBadge" class="gps-badge">GPS : inactif</div>
+
+        <div id="activityMapPanel" class="activity-map-panel hidden">
+          <div class="activity-map-head">
+            <div>
+              <strong id="activityMapTitle">🥾 Randonnée</strong>
+              <small id="activityMapStatus">GPS enregistrement</small>
+            </div>
+            <div class="activity-map-actions">
+              <button id="activityPauseBtn" type="button" aria-label="Mettre en pause">⏸</button>
+              <button id="activityStopBtn" type="button" aria-label="Terminer l'activité">⏹</button>
+            </div>
+          </div>
+          <div class="activity-live-stats">
+            <div><span>Distance</span><strong id="activityMapDistance">0,00 km</strong></div>
+            <div><span>Temps</span><strong id="activityMapTime">00:00</strong></div>
+            <div><span>Vitesse</span><strong id="activityMapSpeed">0,0 km/h</strong></div>
+          </div>
+          <div class="activity-map-bottom">
+            <button id="targetSelectBtn" class="target-btn" type="button">🎯 Destination</button>
+            <div id="targetGuide" class="target-guide hidden">
+              <span id="targetArrow" class="target-arrow">↑</span>
+              <div><strong id="targetDistance">--</strong><small id="targetBearing">--</small></div>
+              <div class="target-eta"><span>ETA</span><strong id="targetEta">--</strong></div>
+              <button id="targetClearBtn" type="button" aria-label="Supprimer la destination">✕</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="plannerPanel" class="planner-panel hidden">
+          <div class="planner-head">
+            <div>
+              <strong>Créer un parcours</strong>
+              <small id="plannerStatus">Touchez la carte pour placer le départ.</small>
+            </div>
+            <div class="planner-mode" role="group" aria-label="Type de parcours">
+              <button class="planner-mode-btn active" data-planner-mode="hike">🥾</button>
+              <button class="planner-mode-btn" data-planner-mode="bike">🚴</button>
+            </div>
+          </div>
+          <div class="planner-actions">
+            <button id="plannerGpsBtn" type="button">📍 Départ GPS</button>
+            <button id="plannerUndoBtn" type="button" disabled>↶ Annuler</button>
+            <button id="plannerClearBtn" type="button" disabled>Effacer</button>
+            <button id="plannerSaveBtn" class="planner-primary" type="button" disabled>💾 Enregistrer</button>
+          </div>
+          <div class="planner-note">Le tracé suit automatiquement les chemins OpenStreetMap. Si le routeur est indisponible, une liaison directe temporaire est affichée.</div>
+        </div>
 
         <div id="radarPanel" class="radar-panel">
           <div class="radar-row">
@@ -80,11 +131,46 @@
           </label>
           <input id="gpxInput" type="file" accept=".gpx,application/gpx+xml,application/xml,text/xml" hidden />
 
+          <button id="createRouteBtn" class="action-card">
+            <span class="action-icon">✏️</span>
+            <span><strong>Créer un parcours</strong><small>Tracer sur les chemins</small></span>
+          </button>
+
+          <button id="activityOpenBtn" class="action-card">
+            <span class="action-icon">▶️</span>
+            <span><strong>Démarrer activité</strong><small>Trace GPS · rando ou vélo</small></span>
+          </button>
+
           <button id="analyzeBtn" class="action-card" disabled>
             <span class="action-icon">🌦️</span>
             <span><strong>Analyser parcours</strong><small>Météo sur le trajet</small></span>
           </button>
         </div>
+
+        <section id="activityCard" class="route-card hidden">
+          <div class="section-head">
+            <div>
+              <div class="label">Suivi GPS</div>
+              <h2 id="activityTitle">Nouvelle activité</h2>
+            </div>
+            <button id="activityCloseCardBtn" class="text-btn" type="button">Fermer</button>
+          </div>
+          <div class="segmented activity-mode-row" role="group" aria-label="Type d’activité">
+            <button class="activity-mode-btn mode-btn active" data-activity-mode="hike">🥾 Randonnée</button>
+            <button class="activity-mode-btn mode-btn" data-activity-mode="bike">🚴 Vélo</button>
+          </div>
+          <div class="activity-main-actions">
+            <button id="activityStartBtn" class="activity-start" type="button">▶ Démarrer</button>
+            <button id="activityExportBtn" class="activity-secondary hidden" type="button">📥 Exporter GPX</button>
+          </div>
+          <div id="activityStats" class="activity-detail-stats hidden">
+            <div><span class="label">Distance</span><strong id="activityDistance">0,00 km</strong></div>
+            <div><span class="label">Durée</span><strong id="activityTime">00:00</strong></div>
+            <div><span class="label">Vitesse</span><strong id="activitySpeed">0,0 km/h</strong></div>
+            <div><span class="label">Moyenne</span><strong id="activityAvgSpeed">0,0 km/h</strong></div>
+          </div>
+          <p id="activityHelp" class="activity-help">Choisis randonnée ou vélo, puis démarre. La trace sera dessinée en direct sur la carte.</p>
+        </section>
 
         <section id="routeCard" class="route-card hidden">
           <div class="section-head">
@@ -92,7 +178,10 @@
               <div class="label">Parcours chargé</div>
               <h2 id="routeName">Randonnée</h2>
             </div>
-            <button id="clearRouteBtn" class="text-btn">Retirer</button>
+            <div class="section-actions">
+              <button id="exportRouteBtn" class="text-btn">GPX</button>
+              <button id="clearRouteBtn" class="text-btn">Retirer</button>
+            </div>
           </div>
           <div class="stats-grid">
             <div><span class="label">Distance</span><strong id="routeDistance">-- km</strong></div>
@@ -110,6 +199,17 @@
           <div id="routeForecast" class="route-forecast hidden"></div>
         </section>
 
+
+        <section id="savedRoutesCard" class="route-card hidden">
+          <div class="section-head">
+            <div>
+              <div class="label">Bibliothèque locale</div>
+              <h2>Mes parcours</h2>
+            </div>
+          </div>
+          <div id="savedRoutesList" class="saved-routes-list"></div>
+        </section>
+
         <section class="forecast-card">
           <div class="section-head">
             <div>
@@ -125,7 +225,7 @@
 
         <section class="info-card">
           <strong>Sources</strong>
-          <p>Météo : Open‑Meteo / modèles Météo‑France AROME & ARPEGE. Radar : RainViewer. Cartographie : OpenTopoMap et OpenStreetMap.</p>
+          <p>Météo et altitude : Open‑Meteo / modèles Météo‑France AROME & ARPEGE / Copernicus DEM. Radar : RainViewer. Cartographie : OpenTopoMap et OpenStreetMap. Routage : OpenStreetMap/FOSSGIS OSRM.</p>
           <p class="tiny">Le radar affiche des observations passées, pas une prévision radar future. Les prévisions restent des estimations : en montagne, vérifie aussi les vigilances et le ciel réel avant de partir.</p>
         </section>
       </section>

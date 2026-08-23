@@ -1,7 +1,7 @@
 {
   "name": "Rando Radar",
   "short_name": "RandoRadar",
-  "description": "Carte topo, GPS, GPX, radar pluie et météo du parcours.",
+  "description": "Carte topo, GPS, suivi d’activité, GPX, radar pluie et météo du parcours.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

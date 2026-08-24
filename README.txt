@@ -31,3 +31,5 @@ Important :
 Après publication, ouvre au moins une fois la v1.10.0 avec Internet afin que le service worker mette à jour les fichiers de l'application.
 
 V1.10.1 : calcul D+/D- lissé (profil régulier + filtre médian/moyenne + seuil 8 m), distance conservée sur la géométrie complète.
+
+V1.10.3 : correction altitude null->0, récupération relief forcée si absent, axe du profil basé sur la distance réelle du tracé complet.

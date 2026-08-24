@@ -1,4 +1,4 @@
-/* Rando Radar v1.10.2 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
+/* Rando Radar v1.10.3 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
 (() => {
   'use strict';
 
@@ -589,6 +589,14 @@
     };
   }
 
+  // Une altitude absente (null/undefined/chaîne vide) ne doit jamais être
+  // interprétée comme 0 m. JavaScript fait Number(null) === 0, ce qui avait
+  // pour effet de considérer certains parcours sans relief comme entièrement
+  // situés au niveau de la mer et empêchait l'appel à l'API d'altitude.
+  function hasElevation(value) {
+    return value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value));
+  }
+
   // Le D+/D− ne doit pas additionner le bruit de chaque cellule du modèle
   // d'altitude. On échantillonne d'abord le tracé à intervalles réguliers,
   // puis on applique un filtre médian + moyenne pondérée et enfin un seuil
@@ -596,10 +604,10 @@
   // petites oscillations parasites ne gonflent plus le dénivelé cumulé.
   function calculateSmoothedElevationStats(points) {
     if (!Array.isArray(points) || points.length < 2) return null;
-    const known = points.filter(p => Number.isFinite(Number(p.ele))).length;
+    const known = points.filter(p => hasElevation(p.ele)).length;
     if (known / points.length < .7) return null;
 
-    const sampled = resampleRouteByDistance(points, 420).filter(p => Number.isFinite(Number(p.ele)));
+    const sampled = resampleRouteByDistance(points, 420).filter(p => hasElevation(p.ele));
     if (sampled.length < 2) return null;
     const raw = sampled.map(p => Number(p.ele));
     const rawChanges = cumulativeElevationWithDeadband(raw, 1);
@@ -672,15 +680,20 @@
       const a = points[aIdx], b = points[bIdx];
       const span = Math.max(1e-9, cumulative[bIdx] - cumulative[aIdx]);
       const t = Math.max(0, Math.min(1, (target - cumulative[aIdx]) / span));
-      const ae = Number(a.ele), be = Number(b.ele);
+      const aHasEle = hasElevation(a.ele), bHasEle = hasElevation(b.ele);
+      const ae = aHasEle ? Number(a.ele) : null, be = bHasEle ? Number(b.ele) : null;
       let ele = null;
-      if (Number.isFinite(ae) && Number.isFinite(be)) ele = ae + (be - ae) * t;
-      else if (Number.isFinite(ae)) ele = ae;
-      else if (Number.isFinite(be)) ele = be;
+      if (aHasEle && bHasEle) ele = ae + (be - ae) * t;
+      else if (aHasEle) ele = ae;
+      else if (bHasEle) ele = be;
       out.push({
         lat: Number(a.lat) + (Number(b.lat) - Number(a.lat)) * t,
         lon: Number(a.lon) + (Number(b.lon) - Number(a.lon)) * t,
         ele,
+        // Conserver la distance exacte le long de la géométrie complète.
+        // Recalculer la distance entre les points échantillonnés coupe les
+        // lacets et raccourcit artificiellement le profil altimétrique.
+        distKm: target,
         time: t < .5 ? (a.time || null) : (b.time || null)
       });
     }
@@ -1148,7 +1161,7 @@
     const originalPoints = route.points || [];
     let points = resampleRouteByDistance(originalPoints, maxPoints);
     if (points.length < 2) throw new Error('Tracé insuffisant pour calculer le profil.');
-    const known = points.filter(p => Number.isFinite(Number(p.ele))).length;
+    const known = points.filter(p => hasElevation(p.ele)).length;
     if (known / points.length < .9) {
       if (!navigator.onLine) {
         const offline = buildRouteObject(route.name, points, { ...route });
@@ -1167,10 +1180,16 @@
 
   function buildElevationChartHtml(route, chartKey, progressRatio = null) {
     const allPoints = (route?.elevationProfile?.length ? route.elevationProfile : route?.points) || [];
-    const pts = allPoints.filter(p => Number.isFinite(Number(p.ele)));
+    const pts = allPoints.filter(p => hasElevation(p.ele));
     if (pts.length < 2 || pts.length / Math.max(1, allPoints.length) < .7) return '<div class="elevation-unavailable">Profil altimétrique indisponible pour ce tracé.</div>';
-    const cumulative = buildCumulativeRouteKm(pts);
-    const total = cumulative[cumulative.length - 1] || route.distanceKm || 1;
+    // Si le profil vient de notre rééchantillonnage, distKm contient la
+    // distance réelle le long du tracé complet. On l'utilise pour l'axe X
+    // afin que le profil affiche exactement la même distance que le parcours.
+    const explicitDistances = pts.map(p => Number(p.distKm));
+    const hasExplicitDistances = explicitDistances.length > 1 && explicitDistances.every((d, i) => Number.isFinite(d) && d >= 0 && (i === 0 || d >= explicitDistances[i - 1]));
+    const cumulative = hasExplicitDistances ? explicitDistances : buildCumulativeRouteKm(pts);
+    const routeTotal = Number(route.distanceKm);
+    const total = Number.isFinite(routeTotal) && routeTotal > 0 ? routeTotal : (cumulative[cumulative.length - 1] || 1);
     const elevations = pts.map(p => Number(p.ele));
     let min = Math.min(...elevations), max = Math.max(...elevations);
     if (max - min < 20) { max += 10; min -= 10; }
@@ -2146,16 +2165,27 @@
     for (let start = 0; start < out.length; start += 100) {
       const chunk = out.slice(start, start + 100);
       const params = new URLSearchParams({
-        latitude: chunk.map(p => p.lat.toFixed(6)).join(','),
-        longitude: chunk.map(p => p.lon.toFixed(6)).join(',')
+        latitude: chunk.map(p => Number(p.lat).toFixed(6)).join(','),
+        longitude: chunk.map(p => Number(p.lon).toFixed(6)).join(',')
       });
-      const res = await fetch(`https://api.open-meteo.com/v1/elevation?${params}`);
-      if (!res.ok) throw new Error('Altitude indisponible');
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort('elevation-timeout'), 12000);
+      let res;
+      try {
+        res = await fetch(`https://api.open-meteo.com/v1/elevation?${params}`, { cache: 'no-store', signal: controller.signal });
+      } finally {
+        clearTimeout(timer);
+      }
+      if (!res?.ok) throw new Error('Altitude indisponible');
       const data = await res.json();
-      (data.elevation || []).forEach((ele, i) => {
-        if (Number.isFinite(Number(ele))) out[start + i].ele = Number(ele);
+      const elevations = Array.isArray(data.elevation) ? data.elevation : [];
+      if (elevations.length !== chunk.length) throw new Error('Réponse altitude incomplète');
+      elevations.forEach((ele, i) => {
+        if (hasElevation(ele)) out[start + i].ele = Number(ele);
       });
     }
+    const valid = out.filter(p => hasElevation(p.ele)).length;
+    if (valid / Math.max(1, out.length) < .9) throw new Error('Altitude incomplète');
     return out;
   }
 
@@ -3449,7 +3479,7 @@
   }
 
   function registerSW() {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.2', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.3', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
   }
 
   initMap();

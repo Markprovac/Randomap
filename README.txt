@@ -1,35 +1,24 @@
-Rando Radar v1.8.0
+Rando Radar v1.9.0
 
-Rando Radar V1.4.2
+Fichiers à publier ensemble :
+- index.html
+- app.js
+- styles.css
+- sw.js
+- manifest.webmanifest
+- icon-192.png
+- icon-512.png
 
-Correction responsive smartphone :
-- largeur réelle 100 % sur smartphone ;
-- carte forcée à occuper toute la largeur disponible ;
-- interface mobile activée jusqu'à 900 px de largeur logique ;
-- tailles de textes et boutons adaptatives avec clamp() ;
-- cartes réorganisées automatiquement selon la largeur ;
-- navigation basse lisible sans zoom ;
-- panneaux activité / planification agrandis ;
-- recalcul de la taille Leaflet lors d'un redimensionnement ou changement d'orientation ;
-- cache PWA v1.4.2.
+Nouveau v1.9.0 : CARTES HORS LIGNE
+- Préparer une carte autour du parcours chargé ou de la position GPS.
+- Choix d'une marge de 1, 3 ou 5 km.
+- Téléchargement avant départ des routes, pistes, sentiers, cours d'eau et points utiles OpenStreetMap.
+- Stockage local dans IndexedDB.
+- Le parcours chargé et la dernière météo disponible sont inclus dans le paquet hors ligne.
+- Bascule automatique sur une carte vectorielle locale lorsque le réseau disparaît.
+- GPS, trace d'activité, suivi GPX, distance et navigation point restent utilisables sans réseau.
+- Radar et nouvelles prévisions météo nécessitent toujours Internet.
+- Leaflet est mis en cache par le service worker afin que l'application puisse démarrer hors connexion après une première installation/mise à jour en ligne.
 
-Fonctions conservées : GPS, radar, météo, import/export GPX, création de parcours,
-suivi d'activité, destination et carte plein écran.
-
-
-V1.4.2 : correction du décalage horizontal apparaissant après le chargement des prévisions météo dynamiques.
-
-
-V1.5.0 : ajout du bouton « Démarrer ce parcours » pour suivre un GPX importé/enregistré, avec distance restante, progression et écart au tracé.
-
-
-V1.6.0 — profils du planificateur
-- Randonnée : profil piéton.
-- Vélo route : Valhalla bicycle_type Road, routes/surfaces adaptées privilégiées.
-- Gravel : Valhalla bicycle_type Cross.
-- VTT : Valhalla bicycle_type Mountain.
-- Repli automatique vers le routeur OSM générique si Valhalla est indisponible.
-- Le profil choisi est mémorisé avec les parcours créés localement.
-
-
-V1.8.0 : Parcours autour avec 4 profils (rando, vélo route, gravel, VTT), tracés affichés directement sur la carte et liste synchronisée.
+Important :
+Ouvre au moins une fois la v1.9.0 avec Internet après publication afin que le nouveau service worker mette en cache les fichiers nécessaires à l'utilisation hors ligne.

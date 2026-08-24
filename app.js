@@ -1,4 +1,4 @@
-/* Rando Radar v1.8.0 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
+/* Rando Radar v1.9.0 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
 (() => {
   'use strict';
 
@@ -139,6 +139,22 @@
     finishActivityModal: $('finishActivityModal'), finishSaveBtn: $('finishSaveBtn'), finishDiscardBtn: $('finishDiscardBtn'), finishCancelBtn: $('finishCancelBtn')
   };
 
+  state.offline = {
+    db: null,
+    activePackage: null,
+    layerGroup: null,
+    forced: false,
+    attributionAdded: false,
+    preparing: false,
+    lastAutoCheck: 0
+  };
+
+  const offlineUI = {
+    card: $('offlineCard'), networkBadge: $('offlineNetworkBadge'), sourceSelect: $('offlineSourceSelect'), bufferSelect: $('offlineBufferSelect'),
+    prepareBtn: $('offlinePrepareBtn'), backOnlineBtn: $('offlineBackOnlineBtn'), progress: $('offlineProgress'), progressTitle: $('offlineProgressTitle'), progressText: $('offlineProgressText'),
+    current: $('offlineCurrent'), currentName: $('offlineCurrentName'), list: $('offlineList')
+  };
+
   function getActivityProfile(mode = state.activity.mode) {
     return ACTIVITY_PROFILES[mode] || ACTIVITY_PROFILES.hike;
   }
@@ -220,6 +236,7 @@
   }
 
   function switchBase(name) {
+    if (state.offline?.activePackage) { toast('Carte en ligne indisponible en mode hors ligne.'); return; }
     if (!state.baseLayers[name] || name === state.activeBase) return;
     state.map.removeLayer(state.baseLayers[state.activeBase]);
     state.baseLayers[name].addTo(state.map);
@@ -228,6 +245,7 @@
   }
 
   async function loadRadar() {
+    if (!navigator.onLine || state.offline?.activePackage) { ui.radarTime.textContent = 'Radar hors ligne'; return; }
     try {
       const res = await fetch('https://api.rainviewer.com/public/weather-maps.json', { cache: 'no-store' });
       if (!res.ok) throw new Error('Radar indisponible');
@@ -264,6 +282,7 @@
   }
 
   function toggleRadar() {
+    if (state.offline?.activePackage || !navigator.onLine) { toast('Le radar nécessite une connexion Internet.'); return; }
     state.radarEnabled = !state.radarEnabled;
     ui.radarToggle.classList.toggle('active', state.radarEnabled);
     ui.radarPanel.classList.toggle('hidden', !state.radarEnabled);
@@ -347,11 +366,23 @@
     if (state.activity.followRoute) updateRouteFollowGuide(state.location);
     if (state.activity.target) updateTargetGuide();
     scheduleWeather(latitude, longitude);
+
+    // Hors ligne : si l'utilisateur sort de la zone active, cherche silencieusement
+    // une autre carte locale couvrant la nouvelle position (au maximum toutes les 20 s).
+    if (!navigator.onLine && !state.offline.forced && Date.now() - (state.offline.lastAutoCheck || 0) > 20000) {
+      state.offline.lastAutoCheck = Date.now();
+      if (!state.offline.activePackage || !bboxContains(state.offline.activePackage.bbox, state.location)) {
+        chooseOfflinePackageForCurrentPosition().then(pkg => {
+          if (pkg && pkg.id !== state.offline.activePackage?.id) activateOfflinePackage(pkg, { fit:false, forced:false });
+        }).catch(() => {});
+      }
+    }
   }
 
   let weatherDebounce = null;
   let lastWeatherKey = '';
   function scheduleWeather(lat, lon) {
+    if (!navigator.onLine) return;
     const key = `${lat.toFixed(3)},${lon.toFixed(3)}`;
     if (key === lastWeatherKey) return;
     clearTimeout(weatherDebounce);
@@ -362,6 +393,19 @@
   }
 
   async function loadWeather(lat, lon, { silent = false } = {}) {
+    if (!navigator.onLine) {
+      const saved = state.offline?.activePackage?.weather || state.lastWeather;
+      if (saved) {
+        state.lastWeather = saved;
+        renderCurrentWeather(saved);
+        renderHourly(saved);
+        if (ui.weatherUpdatedAt) ui.weatherUpdatedAt.textContent = `Météo enregistrée : ${formatOfflineDate(state.offline?.activePackage?.weatherSavedAt)}`;
+        if (!silent) toast('Hors ligne : dernière météo enregistrée affichée.');
+        return true;
+      }
+      if (!silent) toast('Aucune météo enregistrée hors ligne.');
+      return false;
+    }
     try {
       const params = new URLSearchParams({
         latitude: lat,
@@ -389,6 +433,7 @@
   }
 
   async function refreshWeatherNow() {
+    if (!navigator.onLine) { toast('Pas de réseau : affichage de la dernière météo enregistrée.'); return; }
     if (ui.refreshWeatherBtn.disabled) return;
 
     // Retour visuel immédiat : la flèche tourne pendant TOUTE l'opération,
@@ -2143,6 +2188,458 @@
     }
   }
 
+
+  // ---------- Cartes hors ligne v1.9.0 ----------
+  const OFFLINE_DB_NAME = 'randoRadar.offline.v1';
+  const OFFLINE_STORE = 'areas';
+
+  function formatOfflineDate(ts) {
+    if (!ts) return '--';
+    try { return new Date(ts).toLocaleString('fr-FR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }); }
+    catch (_) { return '--'; }
+  }
+
+  function openOfflineDB() {
+    if (state.offline.db) return Promise.resolve(state.offline.db);
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(OFFLINE_DB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(OFFLINE_STORE)) db.createObjectStore(OFFLINE_STORE, { keyPath: 'id' });
+      };
+      req.onsuccess = () => { state.offline.db = req.result; resolve(req.result); };
+      req.onerror = () => reject(req.error || new Error('Stockage hors ligne indisponible'));
+    });
+  }
+
+  async function offlineDbGetAll() {
+    const db = await openOfflineDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(OFFLINE_STORE, 'readonly');
+      const req = tx.objectStore(OFFLINE_STORE).getAll();
+      req.onsuccess = () => resolve((req.result || []).sort((a,b) => (b.createdAt||0)-(a.createdAt||0)));
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function offlineDbPut(item) {
+    const db = await openOfflineDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(OFFLINE_STORE, 'readwrite');
+      tx.objectStore(OFFLINE_STORE).put(item);
+      tx.oncomplete = () => resolve(item);
+      tx.onerror = () => reject(tx.error || new Error('Enregistrement impossible'));
+    });
+  }
+
+  async function offlineDbDelete(id) {
+    const db = await openOfflineDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(OFFLINE_STORE, 'readwrite');
+      tx.objectStore(OFFLINE_STORE).delete(id);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  function setOfflineProgress(show, title = 'Préparation…', text = '') {
+    if (!offlineUI.progress) return;
+    offlineUI.progress.classList.toggle('hidden', !show);
+    if (offlineUI.progressTitle) offlineUI.progressTitle.textContent = title;
+    if (offlineUI.progressText) offlineUI.progressText.textContent = text;
+  }
+
+  function updateOfflineNetworkBadge() {
+    if (!offlineUI.networkBadge) return;
+    const off = !navigator.onLine || !!state.offline.activePackage;
+    offlineUI.networkBadge.textContent = off ? '📴 Hors ligne' : '🌐 En ligne';
+    offlineUI.networkBadge.classList.toggle('offline', off);
+    offlineUI.backOnlineBtn?.classList.toggle('hidden', !state.offline.activePackage || !navigator.onLine);
+  }
+
+  function routeSamplesForOffline(points, bufferKm) {
+    const valid = (points || []).filter(p => Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lon)));
+    if (valid.length <= 2) return valid;
+    const total = routeDistance(valid);
+    const spacing = Math.max(.8, Math.max(bufferKm * 1.35, total / 16));
+    const out = [valid[0]];
+    let acc = 0, target = spacing;
+    for (let i=1; i<valid.length; i++) {
+      acc += haversine(valid[i-1], valid[i]);
+      if (acc >= target) { out.push(valid[i]); target += spacing; }
+    }
+    const last = valid[valid.length-1];
+    if (out[out.length-1] !== last) out.push(last);
+    if (out.length > 18) {
+      const step = (out.length - 1) / 17;
+      return Array.from({length:18}, (_,i) => out[Math.round(i*step)]);
+    }
+    return out;
+  }
+
+  function buildOfflineOverpassQuery(points, radiusM) {
+    const safePoints = points.slice(0,18);
+    const selectors = [];
+    for (const p of safePoints) {
+      const at = `${radiusM},${Number(p.lat).toFixed(6)},${Number(p.lon).toFixed(6)}`;
+      selectors.push(`way(around:${at})["highway"];`);
+      selectors.push(`way(around:${at})["waterway"];`);
+      selectors.push(`way(around:${at})["natural"="water"];`);
+      selectors.push(`way(around:${at})["landuse"~"^(forest|meadow|grass|farmland|orchard)$"];`);
+      selectors.push(`way(around:${at})["leisure"="nature_reserve"];`);
+      selectors.push(`node(around:${at})["place"~"^(village|hamlet|locality)$"];`);
+      selectors.push(`node(around:${at})["tourism"~"^(alpine_hut|wilderness_hut|viewpoint|information)$"];`);
+      selectors.push(`node(around:${at})["amenity"~"^(drinking_water|parking|shelter)$"];`);
+    }
+    return `[out:json][timeout:65];(${selectors.join('')});out body geom qt;`;
+  }
+
+
+  async function fetchOfflineElementsSegmented(samples, radiusM) {
+    const merged = new Map();
+    const chunks = [];
+    for (let i=0; i<samples.length; i+=4) chunks.push(samples.slice(i,i+4));
+    for (let i=0; i<chunks.length; i++) {
+      setOfflineProgress(true, 'Téléchargement de la carte…', `Zone ${i+1} sur ${chunks.length} le long du parcours.`);
+      const data = await fetchOverpass(buildOfflineOverpassQuery(chunks[i], radiusM), 62000);
+      for (const el of data.elements || []) merged.set(`${el.type}:${el.id}`, el);
+    }
+    return { elements:[...merged.values()] };
+  }
+
+  function thinOfflineGeometry(geom) {
+    const pts = (geom || []).map(g => [Number(g.lat), Number(g.lon)]).filter(a => Number.isFinite(a[0]) && Number.isFinite(a[1]));
+    if (pts.length < 3) return pts;
+    const out = [pts[0]];
+    let last = { lat: pts[0][0], lon: pts[0][1] };
+    for (let i=1; i<pts.length-1; i++) {
+      const p = { lat: pts[i][0], lon: pts[i][1] };
+      if (haversine(last, p) >= .012) { out.push(pts[i]); last = p; }
+    }
+    out.push(pts[pts.length-1]);
+    return out;
+  }
+
+  function compactOfflineElements(data) {
+    const out = [];
+    const seen = new Set();
+    for (const el of data.elements || []) {
+      const key = `${el.type}:${el.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const tags = el.tags || {};
+      if (el.type === 'way' && Array.isArray(el.geometry)) {
+        const geometry = thinOfflineGeometry(el.geometry);
+        if (geometry.length < 2) continue;
+        const keepTags = {};
+        for (const k of ['name','ref','highway','surface','tracktype','waterway','natural','landuse','leisure','bicycle','foot','access']) if (tags[k] != null) keepTags[k] = tags[k];
+        out.push({ type:'way', id:Number(el.id), geometry, tags:keepTags });
+      } else if (el.type === 'node' && Number.isFinite(Number(el.lat)) && Number.isFinite(Number(el.lon))) {
+        const keepTags = {};
+        for (const k of ['name','place','tourism','amenity','ref']) if (tags[k] != null) keepTags[k] = tags[k];
+        out.push({ type:'node', id:Number(el.id), lat:Number(el.lat), lon:Number(el.lon), tags:keepTags });
+      }
+    }
+    return out;
+  }
+
+  function offlineBoundsFromData(features, route) {
+    let south=90, west=180, north=-90, east=-180;
+    const add=(lat,lon)=>{ if(!Number.isFinite(lat)||!Number.isFinite(lon)) return; south=Math.min(south,lat); north=Math.max(north,lat); west=Math.min(west,lon); east=Math.max(east,lon); };
+    for (const f of features || []) {
+      if (f.type === 'node') add(f.lat,f.lon);
+      else for (const pt of f.geometry || []) add(pt[0],pt[1]);
+    }
+    for (const p of route?.points || []) add(Number(p.lat),Number(p.lon));
+    return south <= north ? [south,west,north,east] : null;
+  }
+
+  function offlineFeatureClass(tags={}) {
+    if (tags.natural === 'water') return 'water';
+    if (tags.landuse || tags.leisure === 'nature_reserve') return 'land';
+    if (tags.waterway) return 'waterway';
+    const hw = String(tags.highway || '');
+    if (['motorway','trunk','primary','secondary','tertiary'].includes(hw)) return 'major-road';
+    if (['residential','unclassified','service','living_street','road'].includes(hw)) return 'road';
+    if (['cycleway'].includes(hw)) return 'cycleway';
+    if (['track'].includes(hw)) return 'track';
+    if (['path','footway','bridleway','steps','pedestrian'].includes(hw)) return 'trail';
+    return 'other';
+  }
+
+  function offlineStyleFor(feature) {
+    const cls = offlineFeatureClass(feature.tags);
+    if (cls === 'water') return { color:'#8abbd9', weight:1, fillColor:'#b9ddec', fillOpacity:.72 };
+    if (cls === 'land') return { color:'#b7cbb3', weight:.6, fillColor:'#dfead8', fillOpacity:.55 };
+    if (cls === 'waterway') return { color:'#65a9d2', weight:1.8, opacity:.85 };
+    if (cls === 'major-road') return { color:'#7c8791', weight:3.2, opacity:.9 };
+    if (cls === 'road') return { color:'#9aa3aa', weight:2.2, opacity:.85 };
+    if (cls === 'cycleway') return { color:'#4b8f79', weight:2.4, opacity:.9, dashArray:'7 4' };
+    if (cls === 'track') return { color:'#92724f', weight:2, opacity:.86, dashArray:'6 5' };
+    if (cls === 'trail') return { color:'#7a6e61', weight:1.7, opacity:.82, dashArray:'3 5' };
+    return { color:'#b0b5b8', weight:1.2, opacity:.65 };
+  }
+
+  function drawOfflinePackage(pkg, fit = true) {
+    if (!pkg) return;
+    if (state.offline.layerGroup) state.map.removeLayer(state.offline.layerGroup);
+    const group = L.layerGroup().addTo(state.map);
+    state.offline.layerGroup = group;
+
+    const features = pkg.features || [];
+    // Les surfaces d'abord pour que routes et sentiers restent lisibles.
+    const sorted = features.slice().sort((a,b) => {
+      const rank = f => f.type === 'node' ? 3 : (['water','land'].includes(offlineFeatureClass(f.tags)) ? 0 : 1);
+      return rank(a)-rank(b);
+    });
+    for (const f of sorted) {
+      if (f.type === 'way') {
+        const cls = offlineFeatureClass(f.tags);
+        const latlngs = f.geometry;
+        let layer;
+        const closed = latlngs.length > 2 && Math.abs(latlngs[0][0]-latlngs[latlngs.length-1][0]) < 1e-7 && Math.abs(latlngs[0][1]-latlngs[latlngs.length-1][1]) < 1e-7;
+        if (closed && ['water','land'].includes(cls)) layer = L.polygon(latlngs, offlineStyleFor(f));
+        else layer = L.polyline(latlngs, offlineStyleFor(f));
+        const name = f.tags?.name || f.tags?.ref;
+        if (name) layer.bindTooltip(escapeHtml(name), { sticky:true, className:'offline-map-label', direction:'top' });
+        layer.addTo(group);
+      } else if (f.type === 'node') {
+        const t = f.tags || {};
+        const name = t.name || ({drinking_water:'Eau potable',parking:'Parking',shelter:'Abri'})[t.amenity] || ({alpine_hut:'Refuge',wilderness_hut:'Abri',viewpoint:'Point de vue'})[t.tourism] || t.place;
+        if (t.place && name) {
+          const icon = L.divIcon({ className:'', html:`<div class="offline-place-label">${escapeHtml(name)}</div>`, iconSize:[100,20], iconAnchor:[50,10] });
+          L.marker([f.lat,f.lon], { icon, interactive:false, zIndexOffset:250 }).addTo(group);
+        } else {
+          const symbol = t.amenity === 'drinking_water' ? '💧' : t.amenity === 'parking' ? '🅿️' : (t.tourism?.includes('hut') ? '🏠' : t.tourism === 'viewpoint' ? '👁️' : '•');
+          const marker = L.circleMarker([f.lat,f.lon], { radius:4.5, color:'#526474', weight:1, fillColor:'#fff', fillOpacity:.95 });
+          if (name) marker.bindTooltip(`${symbol} ${escapeHtml(name)}`, { direction:'top', className:'offline-map-label' });
+          marker.addTo(group);
+        }
+      }
+    }
+    state.routeLine?.bringToFront?.();
+    state.activity.line?.bringToFront?.();
+    if (fit && pkg.bbox) state.map.fitBounds([[pkg.bbox[0],pkg.bbox[1]],[pkg.bbox[2],pkg.bbox[3]]], { padding:[22,22] });
+  }
+
+  function setOnlineBaseVisible(visible) {
+    for (const layer of Object.values(state.baseLayers)) if (state.map.hasLayer(layer)) state.map.removeLayer(layer);
+    if (visible && state.baseLayers[state.activeBase]) state.baseLayers[state.activeBase].addTo(state.map);
+    document.querySelectorAll('[data-basemap]').forEach(btn => btn.disabled = !visible);
+  }
+
+  function setOfflineMapStatusVisible(visible) {
+    let badge = document.getElementById('offlineMapStatus');
+    if (visible && !badge) {
+      badge = document.createElement('div'); badge.id='offlineMapStatus'; badge.className='offline-status-map'; badge.textContent='📴 Carte hors ligne';
+      ui.mapWrap.appendChild(badge);
+    } else if (!visible && badge) badge.remove();
+  }
+
+  function activateOfflinePackage(pkg, { fit = true, forced = true } = {}) {
+    if (!pkg) return;
+    state.offline.activePackage = pkg;
+    state.offline.forced = forced;
+    setOnlineBaseVisible(false);
+    if (state.radarLayer && state.map.hasLayer(state.radarLayer)) state.map.removeLayer(state.radarLayer);
+    ui.radarPanel.classList.add('hidden');
+    ui.radarToggle.classList.remove('active');
+    ui.radarTime.textContent = 'Radar hors ligne';
+    document.getElementById('map')?.classList.add('offline-vector-map');
+    drawOfflinePackage(pkg, fit);
+    setOfflineMapStatusVisible(true);
+    if (!state.offline.attributionAdded && state.map.attributionControl) {
+      state.map.attributionControl.addAttribution('Carte hors ligne © OpenStreetMap contributors');
+      state.offline.attributionAdded = true;
+    }
+    if (offlineUI.current && offlineUI.currentName) {
+      offlineUI.current.classList.remove('hidden'); offlineUI.currentName.textContent = pkg.name || 'Carte locale';
+    }
+    if (pkg.route?.points?.length && (!state.route || state.route.name !== pkg.route.name)) {
+      state.route = JSON.parse(JSON.stringify(pkg.route));
+      drawRoute(false);
+      renderRouteStats();
+    }
+    state.routeLine?.bringToFront?.();
+    state.activity.line?.bringToFront?.();
+    if (pkg.weather) {
+      state.lastWeather = pkg.weather;
+      renderCurrentWeather(pkg.weather); renderHourly(pkg.weather);
+      if (ui.weatherUpdatedAt) ui.weatherUpdatedAt.textContent = `Météo enregistrée : ${formatOfflineDate(pkg.weatherSavedAt)}`;
+    }
+    updateOfflineNetworkBadge();
+  }
+
+  function deactivateOfflineMap({ restoreOnline = true } = {}) {
+    if (state.offline.layerGroup) state.map.removeLayer(state.offline.layerGroup);
+    state.offline.layerGroup = null;
+    state.offline.activePackage = null;
+    state.offline.forced = false;
+    document.getElementById('map')?.classList.remove('offline-vector-map');
+    setOfflineMapStatusVisible(false);
+    if (state.offline.attributionAdded && state.map.attributionControl) {
+      state.map.attributionControl.removeAttribution('Carte hors ligne © OpenStreetMap contributors');
+      state.offline.attributionAdded = false;
+    }
+    if (offlineUI.current) offlineUI.current.classList.add('hidden');
+    if (restoreOnline && navigator.onLine) {
+      setOnlineBaseVisible(true);
+      ui.radarPanel.classList.toggle('hidden', !state.radarEnabled);
+      ui.radarToggle.classList.toggle('active', state.radarEnabled);
+      loadRadar();
+    }
+    updateOfflineNetworkBadge();
+  }
+
+  function bboxContains(bbox, p) {
+    return !!bbox && !!p && p.lat >= bbox[0] && p.lat <= bbox[2] && p.lon >= bbox[1] && p.lon <= bbox[3];
+  }
+
+  async function chooseOfflinePackageForCurrentPosition() {
+    try {
+      const list = await offlineDbGetAll();
+      if (!list.length) return null;
+      const p = state.location;
+      return (p && list.find(x => bboxContains(x.bbox,p))) || (state.route && list.find(x => x.route?.name === state.route.name)) || list[0];
+    } catch (_) { return null; }
+  }
+
+  async function handleOfflineNetworkLoss() {
+    updateOfflineNetworkBadge();
+    if (state.offline.activePackage) return;
+    const pkg = await chooseOfflinePackageForCurrentPosition();
+    if (pkg) {
+      activateOfflinePackage(pkg, { fit:false, forced:false });
+      toast(`Mode hors ligne : ${pkg.name}`);
+    } else {
+      setOnlineBaseVisible(false);
+      setOfflineMapStatusVisible(true);
+      ui.radarPanel.classList.add('hidden');
+      toast('Hors ligne : aucune carte locale disponible ici.');
+    }
+  }
+
+  async function handleOnlineReturn() {
+    updateOfflineNetworkBadge();
+    if (state.offline.activePackage && state.offline.forced) return;
+    deactivateOfflineMap({ restoreOnline:true });
+    toast('Connexion retrouvée : carte en ligne réactivée.');
+  }
+
+  function offlineFeatureSummary(features) {
+    let roads=0,trails=0,water=0,pois=0;
+    for (const f of features || []) {
+      if (f.type === 'node') { pois++; continue; }
+      const c=offlineFeatureClass(f.tags); if (['major-road','road','cycleway'].includes(c)) roads++; else if (['track','trail'].includes(c)) trails++; else if (['water','waterway'].includes(c)) water++;
+    }
+    return `${roads} routes · ${trails} sentiers/pistes · ${water} éléments d’eau · ${pois} points utiles`;
+  }
+
+  async function prepareOfflineArea() {
+    if (state.offline.preparing) return;
+    if (!navigator.onLine) { toast('Connecte-toi pour préparer une nouvelle carte hors ligne.'); return; }
+    const source = offlineUI.sourceSelect?.value || 'route';
+    const bufferKm = Math.max(1, Math.min(5, Number(offlineUI.bufferSelect?.value || 3)));
+    let route = null, samples = [], name = '';
+
+    if (source === 'route') {
+      if (!state.route?.points?.length) { toast('Charge d’abord un GPX ou un parcours.'); return; }
+      route = JSON.parse(JSON.stringify(state.route));
+      samples = routeSamplesForOffline(route.points, bufferKm);
+      name = `🗺️ ${route.name}`;
+    } else {
+      let loc = state.location;
+      if (!loc && 'geolocation' in navigator) {
+        try {
+          const pos = await new Promise((resolve,reject) => navigator.geolocation.getCurrentPosition(resolve,reject,{enableHighAccuracy:true,maximumAge:3000,timeout:12000}));
+          loc = { lat:pos.coords.latitude, lon:pos.coords.longitude };
+        } catch (_) {}
+      }
+      if (!loc) { toast('Position GPS indisponible.'); return; }
+      samples = [{lat:loc.lat,lon:loc.lon}];
+      name = `📍 Zone ${Number(loc.lat).toFixed(3)}, ${Number(loc.lon).toFixed(3)}`;
+    }
+
+    state.offline.preparing = true;
+    offlineUI.prepareBtn.disabled = true;
+    setOfflineProgress(true, 'Préparation de la carte…', 'Téléchargement des routes, pistes, sentiers et points utiles OpenStreetMap.');
+    try {
+      if (navigator.storage?.persist) { try { await navigator.storage.persist(); } catch (_) {} }
+      const data = await fetchOfflineElementsSegmented(samples, Math.round(bufferKm*1000));
+      setOfflineProgress(true, 'Optimisation…', 'Réduction des données pour économiser l’espace du téléphone.');
+      const features = compactOfflineElements(data);
+      if (!features.length) throw new Error('Aucune donnée cartographique trouvée dans cette zone.');
+      const bbox = offlineBoundsFromData(features, route);
+      const now = Date.now();
+      const center = samples[Math.floor(samples.length/2)];
+      // Actualise une dernière météo avant stockage si possible.
+      if (center && navigator.onLine) await loadWeather(center.lat, center.lon, { silent:true });
+      const pkg = {
+        id:`offline-${now}-${Math.random().toString(36).slice(2,7)}`,
+        name, createdAt:now, bufferKm, source, bbox, center,
+        features, route,
+        weather: state.lastWeather ? JSON.parse(JSON.stringify(state.lastWeather)) : null,
+        weatherSavedAt: state.lastWeather ? Date.now() : null,
+        summary: offlineFeatureSummary(features)
+      };
+      pkg.approxBytes = new Blob([JSON.stringify(pkg)]).size;
+      await offlineDbPut(pkg);
+      await renderOfflineAreas();
+      setOfflineProgress(false);
+      toast(`Carte hors ligne prête · ${(pkg.approxBytes/1024/1024).toFixed(1).replace('.',',')} Mo`);
+    } catch (err) {
+      setOfflineProgress(false);
+      toast(err?.message || 'Impossible de préparer la carte hors ligne.');
+    } finally {
+      state.offline.preparing = false;
+      offlineUI.prepareBtn.disabled = false;
+    }
+  }
+
+  async function renderOfflineAreas() {
+    if (!offlineUI.list) return;
+    try {
+      const list = await offlineDbGetAll();
+      if (!list.length) { offlineUI.list.innerHTML = '<div class="skeleton">Aucune carte hors ligne enregistrée.</div>'; return; }
+      offlineUI.list.innerHTML = list.map(x => `
+        <div class="offline-item" data-offline-id="${escapeHtml(x.id)}">
+          <div class="offline-item-main"><strong>${escapeHtml(x.name || 'Carte locale')}</strong><small>${escapeHtml(x.summary || '')}<br>${formatOfflineDate(x.createdAt)} · ${x.bufferKm || 0} km de marge · ${((x.approxBytes||0)/1024/1024).toFixed(1).replace('.',',')} Mo</small></div>
+          <div class="offline-item-actions">
+            <button type="button" class="offline-use" data-offline-action="use" title="Utiliser la carte">🗺️</button>
+            ${x.route ? '<button type="button" data-offline-action="route" title="Charger le parcours">GPX</button>' : ''}
+            <button type="button" class="offline-delete" data-offline-action="delete" title="Supprimer">✕</button>
+          </div>
+        </div>`).join('');
+    } catch (_) {
+      offlineUI.list.innerHTML = '<div class="skeleton">Stockage hors ligne indisponible.</div>';
+    }
+  }
+
+  async function handleOfflineListAction(e) {
+    const btn=e.target.closest('[data-offline-action]'); const row=e.target.closest('[data-offline-id]');
+    if(!btn||!row)return;
+    const list=await offlineDbGetAll(); const pkg=list.find(x=>x.id===row.dataset.offlineId); if(!pkg)return;
+    if(btn.dataset.offlineAction==='use') {
+      activateOfflinePackage(pkg,{fit:true,forced:true}); showAppScreen('map',{scroll:false}); setTimeout(()=>state.map.invalidateSize(),50);
+    } else if(btn.dataset.offlineAction==='route' && pkg.route) {
+      state.route=JSON.parse(JSON.stringify(pkg.route)); drawRoute(true); renderRouteStats(); showAppScreen('routes'); toast(`Parcours chargé : ${pkg.route.name}`);
+    } else if(btn.dataset.offlineAction==='delete') {
+      if(!window.confirm(`Supprimer la carte hors ligne « ${pkg.name} » ?`))return;
+      if(state.offline.activePackage?.id===pkg.id) deactivateOfflineMap({restoreOnline:navigator.onLine});
+      await offlineDbDelete(pkg.id); await renderOfflineAreas();
+    }
+  }
+
+  function bindOfflineEvents() {
+    offlineUI.prepareBtn?.addEventListener('click', prepareOfflineArea);
+    offlineUI.backOnlineBtn?.addEventListener('click', () => deactivateOfflineMap({restoreOnline:true}));
+    offlineUI.list?.addEventListener('click', handleOfflineListAction);
+    window.addEventListener('offline', handleOfflineNetworkLoss);
+    window.addEventListener('online', handleOnlineReturn);
+    updateOfflineNetworkBadge();
+    renderOfflineAreas();
+  }
+
   function bindEvents() {
     document.querySelectorAll('[data-basemap]').forEach(btn => btn.addEventListener('click', () => switchBase(btn.dataset.basemap)));
     ui.radarToggle.addEventListener('click', toggleRadar);
@@ -2299,15 +2796,16 @@
   }
 
   function registerSW() {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.8.0', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.9.0', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
   }
 
   initMap();
   bindEvents();
+  bindOfflineEvents();
   showAppScreen('map', { scroll: false });
   renderSavedRoutes();
   updateActivityUI();
   registerSW();
-  loadRadar();
+  if (navigator.onLine) loadRadar(); else setTimeout(handleOfflineNetworkLoss, 250);
   setTimeout(() => startLocation(true), 400);
 })();

@@ -1,22 +1,35 @@
-const CACHE = 'rando-radar-v1.8.0';
+const CACHE = 'rando-radar-v1.9.0';
 const APP_SHELL = [
   './',
   './index.html',
-  './styles.css?v=1.8.0',
-  './app.js?v=1.8.0',
+  './styles.css?v=1.9.0',
+  './app.js?v=1.9.0',
   './manifest.webmanifest',
   './icon-192.png',
   './icon-512.png'
 ];
 
+const EXTERNAL_SHELL = [
+  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
+  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
+];
+
 self.addEventListener('install', event => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE);
-    // Force réellement le réseau lors de l'installation d'une nouvelle version.
     await Promise.all(APP_SHELL.map(async url => {
       const req = new Request(url, { cache: 'reload' });
       const resp = await fetch(req);
       if (resp.ok) await cache.put(req, resp.clone());
+    }));
+    // Leaflet est indispensable pour démarrer l'application sans réseau.
+    // unpkg autorise CORS : on le place dans le cache lors de l'installation.
+    await Promise.all(EXTERNAL_SHELL.map(async url => {
+      try {
+        const req = new Request(url, { mode: 'cors', cache: 'reload' });
+        const resp = await fetch(req);
+        if (resp.ok) await cache.put(req, resp.clone());
+      } catch (_) {}
     }));
     await self.skipWaiting();
   })());
@@ -41,21 +54,38 @@ async function networkFirst(req) {
   }
 }
 
+async function cacheFirst(req) {
+  const cache = await caches.open(CACHE);
+  const cached = await cache.match(req);
+  if (cached) return cached;
+  try {
+    const resp = await fetch(req);
+    if (resp && resp.ok) await cache.put(req, resp.clone());
+    return resp;
+  } catch (_) {
+    return Response.error();
+  }
+}
+
 self.addEventListener('fetch', event => {
   const req = event.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
+
+  // Leaflet : cache d'abord pour permettre le démarrage complet hors ligne.
+  if (url.origin === 'https://unpkg.com' && /leaflet@1\.9\.4\/dist\/leaflet\.(?:js|css)$/.test(url.pathname)) {
+    event.respondWith(cacheFirst(req));
+    return;
+  }
+
   if (url.origin !== self.location.origin) return;
 
-  // HTML, JS et CSS : réseau d'abord. Cela évite qu'une nouvelle version
-  // continue d'exécuter l'ancien JavaScript de la PWA.
   const isCore = req.mode === 'navigate' || /\.(?:html|js|css)$/.test(url.pathname);
   if (isCore) {
     event.respondWith(networkFirst(req));
     return;
   }
 
-  // Ressources stables : cache d'abord avec repli réseau.
   event.respondWith(caches.match(req).then(cached => cached || fetch(req).then(resp => {
     if (resp && resp.ok) {
       const copy = resp.clone();

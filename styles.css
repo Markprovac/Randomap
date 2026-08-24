@@ -1389,3 +1389,12 @@ body.activity-choice-open{overflow:hidden}
 
 /* V1.10.1 — profil altimétrique filtré */
 .elevation-filter-note{padding:4px 10px 9px;color:#718096;font-size:10px;line-height:1.3;text-align:center}
+
+
+/* v1.10.11 — état hors ligne + progression réelle */
+.auto-offline-badge{top:94px;right:12px;left:auto;background:#eef6ff;color:#245986;border-color:#cddff2}
+.auto-offline-badge.ready{background:#eaf8f1;color:#0b7758;border-color:#bfe7d5}
+.auto-offline-badge.partial{background:#fff3df;color:#8b5a00;border-color:#efd39a}
+.elev-live-dot{fill:#e11d48;stroke:#fff;stroke-width:3;pointer-events:none}
+.elev-live-dot.hidden{display:none}
+.elev-dot{fill:#7b8794;stroke:#fff;stroke-width:2}

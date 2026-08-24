@@ -1,4 +1,4 @@
-/* Rando Radar v1.10.10 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
+/* Rando Radar v1.10.11 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
 (() => {
   'use strict';
 
@@ -123,6 +123,7 @@
       followRouteCumKm: null,
       followRouteLastIndex: null,
       offRouteAlerted: false,
+      routeProgressMarker: null,
     }
   };
 
@@ -1204,6 +1205,13 @@
     state.elevationCharts.set(chartKey, { route, points: pts, cumulative, total, xy, W, left, innerW });
     const pr = Number.isFinite(progressRatio) ? clamp01(progressRatio) : null;
     const px = pr == null ? left : left + pr * innerW;
+    let liveBest = 0;
+    if (pr != null) {
+      const targetKm = pr * total;
+      let liveDiff = Infinity;
+      for (let i=0;i<cumulative.length;i++) { const d=Math.abs(cumulative[i]-targetKm); if(d<liveDiff){liveDiff=d;liveBest=i;} }
+    }
+    const liveQ = xy[liveBest] || xy[0];
     const rawGain = Number(route?.rawGain), filteredGain = Number(route?.gain);
     const filterDiagnostic = Number.isFinite(rawGain) && Number.isFinite(filteredGain) && rawGain > filteredGain + 20
       ? `D+ brut ${Math.round(rawGain)} m → lissé ${Math.round(filteredGain)} m`
@@ -1215,8 +1223,9 @@
         <path class="elev-area" d="${areaPath}" />
         <path class="elev-line" d="${linePath}" />
         <line class="elev-progress ${pr==null?'hidden':''}" data-elev-progress x1="${px}" y1="${top}" x2="${px}" y2="${top+innerH}" />
+        <circle class="elev-live-dot ${pr==null?'hidden':''}" data-elev-live-dot cx="${liveQ.x}" cy="${liveQ.y}" r="6" />
         <line class="elev-cursor" data-elev-cursor x1="${left}" y1="${top}" x2="${left}" y2="${top+innerH}" />
-        <circle class="elev-dot" data-elev-dot cx="${xy[0].x}" cy="${xy[0].y}" r="6" />
+        <circle class="elev-dot" data-elev-dot cx="${xy[0].x}" cy="${xy[0].y}" r="5" />
         <text class="elev-axis-label" x="${left}" y="${H-7}">0 km</text>
         <text class="elev-axis-label" text-anchor="end" x="${W-right}" y="${H-7}">${total.toFixed(1).replace('.',',')} km</text>
         <text class="elev-alt-label" x="${left+4}" y="${top+12}">${Math.round(max)} m</text>
@@ -1253,10 +1262,20 @@
         const alt = chart.querySelector('[data-elev-altitude]');
         if (dist) dist.textContent = `${data.cumulative[best].toFixed(1).replace('.',',')} km`;
         if (alt) alt.textContent = `${Math.round(Number(point.ele))} m`;
+        chart.dataset.manualUntil = String(Date.now() + 3000);
         showElevationPointOnMap(point);
+      };
+      const restoreLive = () => {
+        setTimeout(() => {
+          if (Date.now() < Number(chart.dataset.manualUntil || 0)) return;
+          const r = Number(chart.dataset.liveRatio);
+          if (Number.isFinite(r)) updateElevationChartProgress(chart.dataset.elevationChart, r);
+        }, 3100);
       };
       svg.addEventListener('pointerdown', ev => { try { svg.setPointerCapture(ev.pointerId); } catch (_) {} update(ev); });
       svg.addEventListener('pointermove', ev => { if (ev.pointerType === 'mouse' || svg.hasPointerCapture?.(ev.pointerId)) update(ev); });
+      svg.addEventListener('pointerup', restoreLive);
+      svg.addEventListener('pointercancel', restoreLive);
     });
   }
 
@@ -1272,11 +1291,35 @@
     const chart = document.querySelector(`.elevation-chart[data-elevation-chart="${chartKey}"]`);
     const data = state.elevationCharts.get(chartKey);
     if (!chart || !data) return;
+    const r = clamp01(ratio);
+    chart.dataset.liveRatio = String(r);
     const line = chart.querySelector('[data-elev-progress]');
-    if (!line) return;
-    const x = data.left + clamp01(ratio) * data.innerW;
-    line.classList.remove('hidden');
-    line.setAttribute('x1', x); line.setAttribute('x2', x);
+    const x = data.left + r * data.innerW;
+    if (line) {
+      line.classList.remove('hidden');
+      line.setAttribute('x1', x); line.setAttribute('x2', x);
+    }
+    const targetKm = r * data.total;
+    let best = 0, diff = Infinity;
+    for (let i=0;i<data.cumulative.length;i++) { const d=Math.abs(data.cumulative[i]-targetKm); if(d<diff){diff=d;best=i;} }
+    const q = data.xy[best], point = data.points[best];
+    const liveDot = chart.querySelector('[data-elev-live-dot]');
+    if (liveDot && q) {
+      liveDot.classList.remove('hidden');
+      liveDot.setAttribute('cx', q.x); liveDot.setAttribute('cy', q.y);
+    }
+    // Après 3 s sans manipulation manuelle, le curseur et les valeurs reviennent
+    // automatiquement sur la progression réelle.
+    if (Date.now() >= Number(chart.dataset.manualUntil || 0) && q && point) {
+      const cursor = chart.querySelector('[data-elev-cursor]');
+      const dot = chart.querySelector('[data-elev-dot]');
+      cursor?.setAttribute('x1', q.x); cursor?.setAttribute('x2', q.x);
+      dot?.setAttribute('cx', q.x); dot?.setAttribute('cy', q.y);
+      const dist = chart.querySelector('[data-elev-distance]');
+      const alt = chart.querySelector('[data-elev-altitude]');
+      if (dist) dist.textContent = `${data.cumulative[best].toFixed(1).replace('.',',')} km`;
+      if (alt) alt.textContent = `${Math.round(Number(point.ele))} m`;
+    }
   }
 
   function routeDetails(route, profileKey, metrics = null) {
@@ -2686,6 +2729,8 @@
   function clearActivityTrack() {
     if (state.activity.line) state.map.removeLayer(state.activity.line);
     state.activity.line = null;
+    if (state.activity.routeProgressMarker) state.map.removeLayer(state.activity.routeProgressMarker);
+    state.activity.routeProgressMarker = null;
   }
 
   function activityElapsedMs() {
@@ -2797,6 +2842,18 @@
     const progress = total > 0 ? Math.min(100, Math.max(0, travelledOnRoute / total * 100)) : 0;
     const deviationM = Math.round(bestKm * 1000);
     const threshold = getActivityProfile(state.activity.mode).offRouteM;
+
+    // Point rouge = progression réelle projetée sur le parcours suivi.
+    const rp = route.points[bestIndex];
+    if (rp && Number.isFinite(Number(rp.lat)) && Number.isFinite(Number(rp.lon))) {
+      const rll = [Number(rp.lat), Number(rp.lon)];
+      if (!state.activity.routeProgressMarker) {
+        state.activity.routeProgressMarker = L.circleMarker(rll, { radius:8, color:'#fff', weight:3, fillColor:'#e11d48', fillOpacity:1, pane:'markerPane' }).addTo(state.map);
+      } else state.activity.routeProgressMarker.setLatLng(rll);
+      const altTxt = hasElevation(rp.ele) ? ` · ${Math.round(Number(rp.ele))} m` : '';
+      state.activity.routeProgressMarker.bindTooltip(`${Math.round(progress)} %${altTxt}`, { direction:'top', offset:[0,-8] });
+      state.activity.routeProgressMarker.bringToFront?.();
+    }
 
     ui.routeFollowGuide.classList.remove('hidden');
     ui.routeFollowName.textContent = route.name || 'Parcours';
@@ -3309,6 +3366,27 @@
     if (fit && pkg.bbox) state.map.fitBounds([[pkg.bbox[0],pkg.bbox[1]],[pkg.bbox[2],pkg.bbox[3]]], { padding:[22,22] });
   }
 
+  function freezeOnlineBaseForOffline() {
+    // On conserve la couche raster déjà affichée : les tuiles présentes à l'écran
+    // et celles encore en cache navigateur restent visibles. La carte vectorielle
+    // locale est dessinée par-dessus. On désactive seulement le changement de fond.
+    document.querySelectorAll('[data-basemap]').forEach(btn => btn.disabled = true);
+  }
+
+  function setAutoOfflineBadge(mode, text = '') {
+    let badge = document.getElementById('autoOfflineBadge');
+    if (!mode) { badge?.remove(); return; }
+    if (!badge) {
+      badge = document.createElement('div');
+      badge.id = 'autoOfflineBadge';
+      badge.className = 'offline-status-map auto-offline-badge';
+      ui.mapWrap.appendChild(badge);
+    }
+    badge.classList.toggle('ready', mode === 'ready');
+    badge.classList.toggle('partial', mode === 'partial');
+    badge.textContent = text || (mode === 'preparing' ? '⬇️ Carte secours en préparation…' : mode === 'ready' ? '✓ Carte secours prête' : '⚠️ Carte secours partielle');
+  }
+
   function setOnlineBaseVisible(visible) {
     for (const layer of Object.values(state.baseLayers)) if (state.map.hasLayer(layer)) state.map.removeLayer(layer);
     if (visible && state.baseLayers[state.activeBase]) state.baseLayers[state.activeBase].addTo(state.map);
@@ -3327,7 +3405,7 @@
     if (!pkg) return;
     state.offline.activePackage = pkg;
     state.offline.forced = forced;
-    setOnlineBaseVisible(false);
+    freezeOnlineBaseForOffline();
     if (state.radarLayer && state.map.hasLayer(state.radarLayer)) state.map.removeLayer(state.radarLayer);
     ui.radarPanel.classList.add('hidden');
     ui.radarToggle.classList.remove('active');
@@ -3399,10 +3477,12 @@
       activateOfflinePackage(pkg, { fit:false, forced:false });
       toast(`Mode hors ligne : ${pkg.name}`);
     } else {
-      setOnlineBaseVisible(false);
+      // Ne pas effacer brutalement la carte déjà à l'écran : les tuiles déjà
+      // chargées/cachées peuvent rester visibles même sans réseau.
+      freezeOnlineBaseForOffline();
       setOfflineMapStatusVisible(true);
       ui.radarPanel.classList.add('hidden');
-      toast('Hors ligne : aucune carte locale disponible ici.');
+      toast('Hors ligne : carte locale pas encore prête. Les tuiles déjà chargées restent affichées.');
     }
   }
 
@@ -3506,15 +3586,35 @@
 
   async function autoPrepareOfflineForActivity(routeToFollow = null) {
     if (!navigator.onLine) return null;
-    if (routeToFollow?.points?.length) {
-      return createOfflinePackage({ route:routeToFollow, bufferKm:3, automatic:true });
-    }
-    const loc = state.location;
-    if (!loc) {
-      state.offline.pendingActivityPrepare = true;
+    setAutoOfflineBadge('preparing');
+    let pkg = null;
+    try {
+      // Corridor automatique volontairement plus léger pour être disponible
+      // rapidement au départ. Une zone plus large reste téléchargeable manuellement.
+      if (routeToFollow?.points?.length) {
+        pkg = await createOfflinePackage({ route:routeToFollow, bufferKm:2, automatic:true });
+      } else {
+        const loc = state.location;
+        if (!loc) {
+          state.offline.pendingActivityPrepare = true;
+          setAutoOfflineBadge(null);
+          return null;
+        }
+        pkg = await createOfflinePackage({ loc, bufferKm:3, automatic:true });
+      }
+      if (pkg) {
+        setAutoOfflineBadge('ready', '✓ Carte secours hors ligne prête');
+        setTimeout(() => { if (document.getElementById('autoOfflineBadge')?.classList.contains('ready')) setAutoOfflineBadge(null); }, 8000);
+      } else {
+        setAutoOfflineBadge('partial', '⚠️ Carte secours non prête');
+        setTimeout(() => setAutoOfflineBadge(null), 8000);
+      }
+      return pkg;
+    } catch (_) {
+      setAutoOfflineBadge('partial', '⚠️ Carte secours non prête');
+      setTimeout(() => setAutoOfflineBadge(null), 8000);
       return null;
     }
-    return createOfflinePackage({ loc, bufferKm:5, automatic:true });
   }
 
   async function prepareOfflineArea() {
@@ -3745,7 +3845,7 @@
   }
 
   function registerSW() {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.10', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.11', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
   }
 
   initMap();

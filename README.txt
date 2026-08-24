@@ -16,3 +16,6 @@ suivi d'activité, destination et carte plein écran.
 
 
 V1.4.2 : correction du décalage horizontal apparaissant après le chargement des prévisions météo dynamiques.
+
+
+V1.5.0 : ajout du bouton « Démarrer ce parcours » pour suivre un GPX importé/enregistré, avec distance restante, progression et écart au tracé.

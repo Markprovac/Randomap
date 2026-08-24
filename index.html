@@ -69,6 +69,12 @@
             <div><span>Temps</span><strong id="activityMapTime">00:00</strong></div>
             <div><span>Vitesse</span><strong id="activityMapSpeed">0,0 km/h</strong></div>
           </div>
+          <div id="routeFollowGuide" class="route-follow-guide hidden">
+            <div class="route-follow-name"><span>GPX suivi</span><strong id="routeFollowName">Parcours</strong></div>
+            <div><span>Restant</span><strong id="routeFollowRemaining">-- km</strong></div>
+            <div><span>Avancement</span><strong id="routeFollowProgress">--%</strong></div>
+            <div><span>Écart</span><strong id="routeFollowDeviation">-- m</strong></div>
+          </div>
           <div class="activity-map-bottom">
             <button id="targetSelectBtn" class="target-btn" type="button">🎯 Destination</button>
             <div id="targetGuide" class="target-guide hidden">
@@ -207,12 +213,17 @@
             <div><span class="label">Point haut</span><strong id="routeHigh">-- m</strong></div>
           </div>
           <div class="mode-row">
-            <span class="label">Allure estimée</span>
+            <span class="label">Type de sortie</span>
             <div class="segmented" role="group" aria-label="Mode de déplacement">
-              <button class="mode-btn active" data-mode="hike">🥾 Rando · 4 km/h</button>
-              <button class="mode-btn" data-mode="bike">🚴 Vélo · 20 km/h</button>
+              <button class="mode-btn active" data-mode="hike">🥾 Randonnée</button>
+              <button class="mode-btn" data-mode="bike">🚴 Vélo</button>
             </div>
           </div>
+          <div class="route-start-actions">
+            <button id="routeStartBtn" class="route-start-btn" type="button">▶ Démarrer ce parcours</button>
+            <button id="routeShowBtn" class="route-show-btn" type="button">🗺️ Afficher sur la carte</button>
+          </div>
+          <p class="route-start-help">Le tracé GPX restera visible pendant l’activité. Ta trace réelle sera enregistrée séparément.</p>
           <div id="routeForecast" class="route-forecast hidden"></div>
         </section>
 

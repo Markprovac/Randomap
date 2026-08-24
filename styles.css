@@ -841,3 +841,83 @@ html, body {
     animation-duration: 1.5s;
   }
 }
+
+/* =========================================================
+   V1.5.0 — Suivi d'un parcours GPX
+   ========================================================= */
+.route-start-actions{
+  display:grid;
+  grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);
+  gap:8px;
+  margin-top:12px;
+}
+.route-start-btn,.route-show-btn{
+  min-width:0;
+  min-height:48px;
+  border-radius:14px;
+  font-weight:850;
+  padding:9px 12px;
+}
+.route-start-btn{
+  border:1px solid #1764dc;
+  background:linear-gradient(135deg,#2775ed,#1f5fd8);
+  color:#fff;
+  box-shadow:0 8px 18px rgba(36,104,232,.20);
+}
+.route-show-btn{
+  border:1px solid var(--line);
+  background:#eef4f1;
+  color:#185e50;
+}
+.route-start-help{
+  margin:8px 2px 0;
+  color:var(--muted);
+  font-size:10px;
+  line-height:1.4;
+}
+.route-follow-guide{
+  display:grid;
+  grid-template-columns:minmax(0,1.6fr) repeat(3,minmax(0,.75fr));
+  gap:6px;
+  margin-top:8px;
+  padding:8px;
+  border-radius:13px;
+  background:#eaf4ff;
+  border:1px solid #c7ddfb;
+}
+.route-follow-guide>div{
+  min-width:0;
+  padding:5px 7px;
+  border-left:1px solid rgba(36,104,232,.12);
+}
+.route-follow-guide>div:first-child{border-left:0}
+.route-follow-guide span{
+  display:block;
+  color:#687788;
+  font-size:8px;
+  text-transform:uppercase;
+  letter-spacing:.45px;
+}
+.route-follow-guide strong{
+  display:block;
+  margin-top:2px;
+  font-size:11px;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.route-follow-guide.off-route{
+  background:#fff3df;
+  border-color:#efc774;
+}
+.route-follow-guide.off-route #routeFollowDeviation{color:#a55b00}
+
+@media(max-width:520px){
+  .route-start-actions{grid-template-columns:1fr}
+  .route-follow-guide{
+    grid-template-columns:repeat(3,minmax(0,1fr));
+  }
+  .route-follow-name{grid-column:1/-1}
+  .route-follow-guide>div{border-left:0;border-top:1px solid rgba(36,104,232,.10)}
+  .route-follow-guide>div:first-child{border-top:0}
+}

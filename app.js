@@ -1,4 +1,4 @@
-/* Rando Radar v1.3 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
+/* Rando Radar v1.5.0 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
 (() => {
   'use strict';
 
@@ -55,6 +55,10 @@
       target: null,
       targetMarker: null,
       targetLine: null,
+      followRoute: null,
+      followRouteCumKm: null,
+      followRouteLastIndex: null,
+      offRouteAlerted: false,
     }
   };
 
@@ -65,13 +69,14 @@
     mapWrap: $('mapWrap'), mapCloseBtn: $('mapCloseBtn'), mapLocateBtn: $('mapLocateBtn'), mapZoomControls: $('mapZoomControls'), mapZoomInBtn: $('mapZoomInBtn'), mapZoomOutBtn: $('mapZoomOutBtn'), mapExpandHint: $('mapExpandHint'),
     tempNow: $('tempNow'), rainNow: $('rainNow'), gustNow: $('gustNow'), feelNow: $('feelNow'), elevationNow: $('elevationNow'), weatherIcon: $('weatherIcon'),
     alertCard: $('alertCard'), alertIcon: $('alertIcon'), alertTitle: $('alertTitle'), alertText: $('alertText'),
-    gpxInput: $('gpxInput'), analyzeBtn: $('analyzeBtn'), routeCard: $('routeCard'), routeName: $('routeName'), routeDistance: $('routeDistance'), routeGain: $('routeGain'), routeLoss: $('routeLoss'), routeHigh: $('routeHigh'), routeForecast: $('routeForecast'), clearRouteBtn: $('clearRouteBtn'), exportRouteBtn: $('exportRouteBtn'),
+    gpxInput: $('gpxInput'), analyzeBtn: $('analyzeBtn'), routeCard: $('routeCard'), routeName: $('routeName'), routeDistance: $('routeDistance'), routeGain: $('routeGain'), routeLoss: $('routeLoss'), routeHigh: $('routeHigh'), routeForecast: $('routeForecast'), clearRouteBtn: $('clearRouteBtn'), exportRouteBtn: $('exportRouteBtn'), routeStartBtn: $('routeStartBtn'), routeShowBtn: $('routeShowBtn'),
     hourlyForecast: $('hourlyForecast'), refreshWeatherBtn: $('refreshWeatherBtn'), refreshWeatherIcon: $('refreshWeatherIcon'), refreshWeatherLabel: $('refreshWeatherLabel'), weatherUpdatedAt: $('weatherUpdatedAt'), toast: $('toast'),
     createRouteBtn: $('createRouteBtn'), plannerPanel: $('plannerPanel'), plannerStatus: $('plannerStatus'), plannerGpsBtn: $('plannerGpsBtn'), plannerUndoBtn: $('plannerUndoBtn'), plannerClearBtn: $('plannerClearBtn'), plannerSaveBtn: $('plannerSaveBtn'),
     savedRoutesCard: $('savedRoutesCard'), savedRoutesList: $('savedRoutesList'),
     activityOpenBtn: $('activityOpenBtn'), activityCard: $('activityCard'), activityTitle: $('activityTitle'), activityCloseCardBtn: $('activityCloseCardBtn'), activityStartBtn: $('activityStartBtn'), activityExportBtn: $('activityExportBtn'), activityStats: $('activityStats'), activityDistance: $('activityDistance'), activityTime: $('activityTime'), activitySpeed: $('activitySpeed'), activityAvgSpeed: $('activityAvgSpeed'), activityHelp: $('activityHelp'),
     activityMapPanel: $('activityMapPanel'), activityMapTitle: $('activityMapTitle'), activityMapStatus: $('activityMapStatus'), activityMapDistance: $('activityMapDistance'), activityMapTime: $('activityMapTime'), activityMapSpeed: $('activityMapSpeed'), activityPauseBtn: $('activityPauseBtn'), activityStopBtn: $('activityStopBtn'),
-    targetSelectBtn: $('targetSelectBtn'), targetGuide: $('targetGuide'), targetArrow: $('targetArrow'), targetDistance: $('targetDistance'), targetBearing: $('targetBearing'), targetEta: $('targetEta'), targetClearBtn: $('targetClearBtn')
+    targetSelectBtn: $('targetSelectBtn'), targetGuide: $('targetGuide'), targetArrow: $('targetArrow'), targetDistance: $('targetDistance'), targetBearing: $('targetBearing'), targetEta: $('targetEta'), targetClearBtn: $('targetClearBtn'),
+    routeFollowGuide: $('routeFollowGuide'), routeFollowName: $('routeFollowName'), routeFollowRemaining: $('routeFollowRemaining'), routeFollowProgress: $('routeFollowProgress'), routeFollowDeviation: $('routeFollowDeviation')
   };
 
   function initMap() {
@@ -252,6 +257,7 @@
     }
 
     if (state.activity.status === 'recording') recordActivityPoint(state.location);
+    if (state.activity.followRoute) updateRouteFollowGuide(state.location);
     if (state.activity.target) updateTargetGuide();
     scheduleWeather(latitude, longitude);
   }
@@ -407,7 +413,7 @@
       state.route = buildRouteObject(name, pts);
       drawRoute(true);
       renderRouteStats();
-      toast(`Parcours chargé : ${state.route.distanceKm.toFixed(1)} km`);
+      toast(`Parcours chargé : ${state.route.distanceKm.toFixed(1)} km · tu peux maintenant le démarrer.`);
     } catch (err) {
       toast(err.message || 'Impossible de lire ce GPX.');
     }
@@ -465,6 +471,10 @@
   }
 
   function clearRoute() {
+    if (['recording','paused'].includes(state.activity.status) && state.activity.followRoute === state.route) {
+      toast('Ce GPX est actuellement suivi. Termine l’activité avant de le retirer.');
+      return;
+    }
     if (state.routeLine) state.map.removeLayer(state.routeLine);
     state.routeMarkers.forEach(m => state.map.removeLayer(m));
     state.routeMarkers = [];
@@ -478,6 +488,36 @@
   function exportCurrentRoute() {
     if (!state.route) return;
     downloadGpx(state.route.name, state.route.points, 'route');
+  }
+
+  function showCurrentRouteOnMap() {
+    if (!state.route || !state.routeLine) return;
+    enterMapFullscreen();
+    setTimeout(() => {
+      if (state.routeLine) state.map.fitBounds(state.routeLine.getBounds(), { padding: [34, 34] });
+    }, 80);
+  }
+
+  function buildCumulativeRouteKm(points) {
+    const cumulative = [0];
+    for (let i = 1; i < points.length; i++) {
+      cumulative[i] = cumulative[i - 1] + haversine(points[i - 1], points[i]);
+    }
+    return cumulative;
+  }
+
+  function startSelectedRouteActivity() {
+    if (!state.route) {
+      toast('Charge d’abord un parcours GPX.');
+      return;
+    }
+    if (['recording','paused'].includes(state.activity.status)) {
+      toast('Une activité est déjà en cours. Termine-la avant de démarrer ce parcours.');
+      return;
+    }
+    state.activity.mode = state.mode;
+    document.querySelectorAll('[data-activity-mode]').forEach(b => b.classList.toggle('active', b.dataset.activityMode === state.activity.mode));
+    startActivity(state.route);
   }
 
   async function analyzeRoute() {
@@ -830,10 +870,14 @@
     ui.activityCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
-  function startActivity() {
+  function startActivity(routeToFollow = null) {
     if (state.planner.active) stopPlanner(true);
     clearActivityTrack();
     clearActivityTarget();
+    state.activity.followRoute = routeToFollow || null;
+    state.activity.followRouteCumKm = routeToFollow ? buildCumulativeRouteKm(routeToFollow.points) : null;
+    state.activity.followRouteLastIndex = null;
+    state.activity.offRouteAlerted = false;
     state.activity.status = 'recording';
     state.activity.startedAt = Date.now();
     state.activity.pausedAt = null;
@@ -842,7 +886,9 @@
     state.activity.points = [];
     state.activity.distanceKm = 0;
     state.activity.currentSpeed = 0;
-    state.activity.name = `${state.activity.mode === 'bike' ? 'Sortie vélo' : 'Randonnée'} ${new Date().toLocaleString('fr-FR', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})}`;
+    state.activity.name = routeToFollow
+      ? `${routeToFollow.name} · ${new Date().toLocaleString('fr-FR', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})}`
+      : `${state.activity.mode === 'bike' ? 'Sortie vélo' : 'Randonnée'} ${new Date().toLocaleString('fr-FR', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})}`;
     state.activity.line = L.polyline([], { color:'#fb7185', weight:5, opacity:.96 }).addTo(state.map);
     startLocation(false);
     if (state.location) recordActivityPoint(state.location, true);
@@ -850,8 +896,15 @@
     state.activity.timer = setInterval(updateActivityUI, 1000);
     enterMapFullscreen();
     updateActivityUI();
-    setAlert('safe', '▶️', 'Activité en cours', 'La trace GPS est enregistrée. La carte reste libre : ◎ te recentre sur ta position.');
-    toast('Enregistrement GPS démarré.');
+    if (routeToFollow) {
+      drawRoute(false);
+      setAlert('safe', '🧭', 'Suivi du GPX en cours', `${routeToFollow.name} · le tracé bleu reste affiché et ta trace réelle est enregistrée en rose.`);
+      toast(`Parcours démarré : ${routeToFollow.name}`);
+      setTimeout(() => { if (state.routeLine) state.map.fitBounds(state.routeLine.getBounds(), { padding: [34, 34] }); }, 100);
+    } else {
+      setAlert('safe', '▶️', 'Activité en cours', 'La trace GPS est enregistrée. La carte reste libre : ◎ te recentre sur ta position.');
+      toast('Enregistrement GPS démarré.');
+    }
   }
 
   function recordActivityPoint(loc, force = false) {
@@ -946,6 +999,7 @@
       ui.activityExportBtn.classList.add('hidden');
       ui.activityStats.classList.add('hidden');
       ui.activityHelp.textContent = 'Choisis randonnée ou vélo, puis démarre. La trace sera dessinée en direct sur la carte.';
+      hideRouteFollowGuide();
       syncActivityMapPanel();
       return;
     }
@@ -968,11 +1022,15 @@
     if (a.status === 'finished') {
       ui.activityStartBtn.textContent = '▶ Nouvelle activité';
       ui.activityExportBtn.classList.toggle('hidden', a.points.length < 2);
-      ui.activityHelp.textContent = 'Activité terminée. Exporte le GPX pour la conserver ou l’envoyer vers Garmin Connect.';
+      ui.activityHelp.textContent = a.followRoute
+        ? `Parcours suivi : ${a.followRoute.name}. Activité terminée, tu peux exporter ta trace réelle en GPX.`
+        : 'Activité terminée. Exporte le GPX pour la conserver ou l’envoyer vers Garmin Connect.';
     } else {
       ui.activityStartBtn.textContent = '🗺️ Ouvrir la carte';
       ui.activityExportBtn.classList.add('hidden');
-      ui.activityHelp.textContent = a.status === 'paused' ? 'Activité en pause.' : 'Enregistrement GPS en cours. Le déplacement de la carte ne coupe pas le suivi.';
+      ui.activityHelp.textContent = a.status === 'paused'
+        ? 'Activité en pause.'
+        : (a.followRoute ? `Suivi du GPX « ${a.followRoute.name} » en cours.` : 'Enregistrement GPS en cours. Le déplacement de la carte ne coupe pas le suivi.');
     }
 
     ui.activityMapTitle.textContent = a.mode === 'bike' ? '🚴 Vélo' : '🥾 Randonnée';
@@ -983,6 +1041,8 @@
     ui.activityPauseBtn.textContent = a.status === 'paused' ? '▶' : '⏸';
     ui.activityPauseBtn.setAttribute('aria-label', a.status === 'paused' ? 'Reprendre' : 'Mettre en pause');
     syncActivityMapPanel();
+    if (a.followRoute && state.location) updateRouteFollowGuide(state.location);
+    else if (!a.followRoute) hideRouteFollowGuide();
     if (a.target) updateTargetGuide();
   }
 
@@ -1000,6 +1060,56 @@
     const active = ['recording','paused'].includes(state.activity.status);
     ui.activityMapPanel.classList.toggle('hidden', !(active && state.mapFullscreen));
     ui.mapWrap.classList.toggle('activity-active', active && state.mapFullscreen);
+    if (!(active && state.mapFullscreen)) hideRouteFollowGuide();
+  }
+
+  function updateRouteFollowGuide(loc) {
+    const route = state.activity.followRoute;
+    const cum = state.activity.followRouteCumKm;
+    if (!route || !cum || !loc || !route.points?.length) {
+      ui.routeFollowGuide?.classList.add('hidden');
+      return;
+    }
+
+    let bestIndex = 0;
+    let bestKm = Infinity;
+    for (let i = 0; i < route.points.length; i++) {
+      const d = haversine(loc, route.points[i]);
+      if (d < bestKm) {
+        bestKm = d;
+        bestIndex = i;
+      }
+    }
+
+    state.activity.followRouteLastIndex = bestIndex;
+    const travelledOnRoute = cum[bestIndex] || 0;
+    const total = route.distanceKm || cum[cum.length - 1] || 0;
+    const remaining = Math.max(0, total - travelledOnRoute);
+    const progress = total > 0 ? Math.min(100, Math.max(0, travelledOnRoute / total * 100)) : 0;
+    const deviationM = Math.round(bestKm * 1000);
+    const threshold = state.activity.mode === 'bike' ? 120 : 80;
+
+    ui.routeFollowGuide.classList.remove('hidden');
+    ui.routeFollowName.textContent = route.name || 'Parcours';
+    ui.routeFollowRemaining.textContent = `${remaining.toFixed(1).replace('.', ',')} km`;
+    ui.routeFollowProgress.textContent = `${Math.round(progress)} %`;
+    ui.routeFollowDeviation.textContent = `${deviationM} m`;
+    ui.routeFollowGuide.classList.toggle('off-route', deviationM > threshold);
+
+    if (deviationM > threshold && !state.activity.offRouteAlerted) {
+      state.activity.offRouteAlerted = true;
+      toast(`⚠️ Tu es à environ ${deviationM} m du tracé GPX.`);
+    } else if (deviationM <= Math.round(threshold * 0.65)) {
+      state.activity.offRouteAlerted = false;
+    }
+
+    if (remaining < 0.05 && deviationM < threshold) {
+      ui.routeFollowRemaining.textContent = 'Arrivée';
+    }
+  }
+
+  function hideRouteFollowGuide() {
+    ui.routeFollowGuide?.classList.add('hidden');
   }
 
   // ---------- Navigation vers un point ----------
@@ -1248,6 +1358,8 @@
     ui.gpxInput.addEventListener('change', e => e.target.files?.[0] && importGpx(e.target.files[0]));
     ui.clearRouteBtn.addEventListener('click', clearRoute);
     ui.exportRouteBtn.addEventListener('click', exportCurrentRoute);
+    ui.routeStartBtn.addEventListener('click', startSelectedRouteActivity);
+    ui.routeShowBtn.addEventListener('click', showCurrentRouteOnMap);
     ui.analyzeBtn.addEventListener('click', analyzeRoute);
     ui.refreshWeatherBtn.addEventListener('click', refreshWeatherNow);
 

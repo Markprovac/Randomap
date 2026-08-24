@@ -41,3 +41,5 @@ V1.10.5 : vélo route OSM immédiat + contrôle des surfaces OSM + correction Va
 V1.10.11 : contrôle Vélo route strict — OSM immédiat, rejet des surfaces gravel/terre/non revêtues et des chemins non pavés, recalcul Valhalla Road, seconde vérification avant enregistrement.
 
 V1.10.11 : retour au comportement de validation Vélo route de la V1.10.6 (contrôle souple, pas de blocage systématique si le revêtement est non vérifiable).
+
+V1.10.12 : panneau de suivi d'activité déplacé en bas de la carte et repliable. Mode compact par défaut avec activité/distance/temps/vitesse ; tap sur le panneau pour agrandir, chevron pour réduire. Le panneau radar est masqué pendant le suivi plein écran afin de ne pas chevaucher le bottom sheet.

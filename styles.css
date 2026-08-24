@@ -1398,3 +1398,110 @@ body.activity-choice-open{overflow:hidden}
 .elev-live-dot{fill:#e11d48;stroke:#fff;stroke-width:3;pointer-events:none}
 .elev-live-dot.hidden{display:none}
 .elev-dot{fill:#7b8794;stroke:#fff;stroke-width:2}
+
+/* =========================================================
+   V1.10.12 — panneau activité compact / bottom sheet
+   ========================================================= */
+.activity-map-panel{
+  top:auto !important;
+  bottom:calc(12px + env(safe-area-inset-bottom)) !important;
+  left:10px;
+  right:10px;
+  max-height:min(58vh,560px);
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  padding:24px 11px 11px;
+  border-radius:22px;
+  transition:max-height .22s ease,padding .22s ease,box-shadow .22s ease,background .22s ease;
+}
+.activity-panel-toggle{
+  position:absolute;
+  top:4px;
+  left:50%;
+  transform:translateX(-50%);
+  width:52px;
+  height:22px;
+  border:0;
+  border-radius:999px;
+  background:transparent;
+  color:#7a8794;
+  font-size:20px;
+  line-height:20px;
+  font-weight:900;
+  z-index:2;
+  padding:0;
+}
+.activity-panel-toggle::before{
+  content:"";
+  position:absolute;
+  left:50%;
+  top:3px;
+  transform:translateX(-50%);
+  width:34px;
+  height:4px;
+  border-radius:999px;
+  background:#d8dfdc;
+}
+.activity-panel-toggle{padding-top:5px}
+.activity-map-panel.collapsed{
+  max-height:126px;
+  overflow:hidden;
+  padding:20px 10px 9px;
+  cursor:pointer;
+}
+.activity-map-panel.collapsed .activity-map-head{
+  margin-bottom:4px;
+}
+.activity-map-panel.collapsed .activity-map-head small{
+  display:none;
+}
+.activity-map-panel.collapsed .activity-map-head strong{
+  font-size:14px;
+}
+.activity-map-panel.collapsed .activity-map-actions button{
+  width:38px;
+  height:34px;
+}
+.activity-map-panel.collapsed .activity-live-stats{
+  margin-top:5px;
+  gap:5px;
+}
+.activity-map-panel.collapsed .activity-live-stats>div{
+  padding:5px 7px;
+  border-radius:10px;
+}
+.activity-map-panel.collapsed .activity-live-stats span{
+  font-size:7px;
+}
+.activity-map-panel.collapsed .activity-live-stats strong{
+  font-size:12px;
+  margin-top:1px;
+}
+.activity-map-panel.collapsed .route-follow-guide,
+.activity-map-panel.collapsed .activity-map-bottom{
+  display:none !important;
+}
+/* Pendant une activité, le panneau d’activité remplace le panneau radar en bas. */
+.map-wrap.fullscreen.activity-active .radar-panel{
+  display:none !important;
+}
+/* Le panneau reste au-dessus de l’attribution Leaflet sans masquer les contrôles à droite. */
+.map-wrap.fullscreen.activity-active .activity-map-panel{
+  z-index:10020;
+}
+@media(max-width:520px){
+  .activity-map-panel{
+    left:8px !important;
+    right:8px !important;
+    bottom:calc(8px + env(safe-area-inset-bottom)) !important;
+    max-height:min(58vh,520px);
+  }
+  .activity-map-panel.collapsed{max-height:122px}
+}
+@media(max-width:360px){
+  .activity-map-panel{
+    left:6px !important;
+    right:6px !important;
+  }
+  .activity-map-panel.collapsed{max-height:118px}
+}

@@ -1,4 +1,4 @@
-/* Rando Radar v1.10.11 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
+/* Rando Radar v1.10.12 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
 (() => {
   'use strict';
 
@@ -143,7 +143,7 @@
     routeDuration: $('routeDuration'), routeDifficulty: $('routeDifficulty'), routeLow: $('routeLow'), routeSurface: $('routeSurface'), routeElevationSection: $('routeElevationSection'), routeElevationChart: $('routeElevationChart'), routeElevationHint: $('routeElevationHint'),
     savedRoutesCard: $('savedRoutesCard'), savedRoutesList: $('savedRoutesList'),
     activityOpenBtn: $('activityOpenBtn'), activityCard: $('activityCard'), activityTitle: $('activityTitle'), activityCloseCardBtn: $('activityCloseCardBtn'), activityStartBtn: $('activityStartBtn'), activityExportBtn: $('activityExportBtn'), activityStats: $('activityStats'), activityDistance: $('activityDistance'), activityTime: $('activityTime'), activitySpeed: $('activitySpeed'), activityAvgSpeed: $('activityAvgSpeed'), activityHelp: $('activityHelp'),
-    activityMapPanel: $('activityMapPanel'), activityMapTitle: $('activityMapTitle'), activityMapStatus: $('activityMapStatus'), activityMapDistance: $('activityMapDistance'), activityMapTime: $('activityMapTime'), activityMapSpeed: $('activityMapSpeed'), activityPauseBtn: $('activityPauseBtn'), activityStopBtn: $('activityStopBtn'),
+    activityMapPanel: $('activityMapPanel'), activityPanelToggle: $('activityPanelToggle'), activityMapTitle: $('activityMapTitle'), activityMapStatus: $('activityMapStatus'), activityMapDistance: $('activityMapDistance'), activityMapTime: $('activityMapTime'), activityMapSpeed: $('activityMapSpeed'), activityPauseBtn: $('activityPauseBtn'), activityStopBtn: $('activityStopBtn'),
     targetSelectBtn: $('targetSelectBtn'), targetGuide: $('targetGuide'), targetArrow: $('targetArrow'), targetDistance: $('targetDistance'), targetBearing: $('targetBearing'), targetEta: $('targetEta'), targetClearBtn: $('targetClearBtn'),
     routeFollowGuide: $('routeFollowGuide'), routeFollowName: $('routeFollowName'), routeFollowRemaining: $('routeFollowRemaining'), routeFollowProgress: $('routeFollowProgress'), routeFollowDeviation: $('routeFollowDeviation'),
     finishActivityModal: $('finishActivityModal'), finishSaveBtn: $('finishSaveBtn'), finishDiscardBtn: $('finishDiscardBtn'), finishCancelBtn: $('finishCancelBtn')
@@ -2810,11 +2810,37 @@
     downloadGpx(state.activity.name || 'Activité', state.activity.points, 'activity', getActivityProfile().label);
   }
 
+  function setActivityPanelCollapsed(collapsed) {
+    if (!ui.activityMapPanel) return;
+    ui.activityMapPanel.classList.toggle('collapsed', !!collapsed);
+    ui.mapWrap?.classList.toggle('activity-panel-collapsed', !!collapsed);
+    if (ui.activityPanelToggle) {
+      ui.activityPanelToggle.textContent = collapsed ? '⌃' : '⌄';
+      ui.activityPanelToggle.setAttribute('aria-label', collapsed ? 'Agrandir le panneau d’activité' : 'Réduire le panneau d’activité');
+      ui.activityPanelToggle.setAttribute('title', collapsed ? 'Agrandir' : 'Réduire');
+    }
+  }
+
+  function toggleActivityPanel() {
+    if (!ui.activityMapPanel) return;
+    setActivityPanelCollapsed(!ui.activityMapPanel.classList.contains('collapsed'));
+  }
+
   function syncActivityMapPanel() {
     const active = ['recording','paused'].includes(state.activity.status);
-    ui.activityMapPanel.classList.toggle('hidden', !(active && state.mapFullscreen));
-    ui.mapWrap.classList.toggle('activity-active', active && state.mapFullscreen);
-    if (!(active && state.mapFullscreen)) hideRouteFollowGuide();
+    const shouldShow = active && state.mapFullscreen;
+    const wasHidden = ui.activityMapPanel.classList.contains('hidden');
+    ui.activityMapPanel.classList.toggle('hidden', !shouldShow);
+    ui.mapWrap.classList.toggle('activity-active', shouldShow);
+    if (shouldShow) {
+      // À chaque ouverture de la carte pendant une activité, on démarre compact
+      // pour laisser le maximum de carte visible. L’utilisateur peut agrandir d’un tap.
+      if (wasHidden) setActivityPanelCollapsed(true);
+      else ui.mapWrap.classList.toggle('activity-panel-collapsed', ui.activityMapPanel.classList.contains('collapsed'));
+    } else {
+      ui.mapWrap.classList.remove('activity-panel-collapsed');
+      hideRouteFollowGuide();
+    }
   }
 
   function updateRouteFollowGuide(loc) {
@@ -3806,6 +3832,21 @@
     }));
     ui.activityPauseBtn.addEventListener('click', toggleActivityPause);
     ui.activityStopBtn.addEventListener('click', finishActivity);
+    ui.activityPanelToggle?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      toggleActivityPanel();
+    });
+    ui.activityMapPanel?.addEventListener('click', (event) => {
+      // Quand le panneau est réduit, un tap n’importe où sur sa zone libre l’agrandit.
+      // Les boutons Pause/Stop/Destination continuent à fonctionner normalement.
+      if (!ui.activityMapPanel.classList.contains('collapsed')) return;
+      if (event.target.closest('button')) return;
+      setActivityPanelCollapsed(false);
+    });
+    ui.activityMapPanel?.querySelector('.activity-map-head')?.addEventListener('click', (event) => {
+      if (event.target.closest('button')) return;
+      if (!ui.activityMapPanel.classList.contains('collapsed')) setActivityPanelCollapsed(true);
+    });
     ui.finishSaveBtn?.addEventListener('click', () => finalizeActivity(true));
     ui.finishDiscardBtn?.addEventListener('click', () => finalizeActivity(false));
     ui.finishCancelBtn?.addEventListener('click', closeFinishActivityModal);
@@ -3845,7 +3886,7 @@
   }
 
   function registerSW() {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.11', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.12', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
   }
 
   initMap();

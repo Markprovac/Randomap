@@ -1,4 +1,4 @@
-Rando Radar v1.7.0
+Rando Radar v1.7.1
 
 Rando Radar V1.4.2
 

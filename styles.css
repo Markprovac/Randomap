@@ -1154,3 +1154,9 @@ body.activity-choice-open{overflow:hidden}
   .hike-result-actions{justify-content:stretch}
   .hike-result-actions button{flex:1}
 }
+
+
+/* V1.7.1 — quatre profils d’activité */
+.activity-mode-row{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+.activity-mode-row .mode-btn{min-width:0;white-space:normal;line-height:1.2}
+@media(max-width:360px){.activity-mode-row .mode-btn{font-size:11px;padding:9px 5px}}

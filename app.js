@@ -1,4 +1,4 @@
-/* Rando Radar v1.7.0 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
+/* Rando Radar v1.7.1 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
 (() => {
   'use strict';
 
@@ -6,9 +6,17 @@
   const SAVED_ROUTES_KEY = 'randoRadar.savedRoutes.v1';
   const VALHALLA_ROUTE_URL = 'https://valhalla1.openstreetmap.de/route';
   const OVERPASS_ENDPOINTS = [
+    'https://overpass.private.coffee/api/interpreter',
     'https://overpass-api.de/api/interpreter',
-    'https://overpass.kumi.systems/api/interpreter'
+    'https://lz4.overpass-api.de/api/interpreter'
   ];
+  const WAYMARKED_HIKING_API = 'https://hiking.waymarkedtrails.org/api/v1';
+  const ACTIVITY_PROFILES = {
+    hike:   { label: 'Randonnée', icon: '🥾', cycling: false, navSpeed: 4,  maxPlausible: 35,  offRouteM: 80 },
+    road:   { label: 'Vélo route', icon: '🚴', cycling: true,  navSpeed: 20, maxPlausible: 120, offRouteM: 120 },
+    gravel: { label: 'Gravel',     icon: '🚲', cycling: true,  navSpeed: 17, maxPlausible: 120, offRouteM: 110 },
+    mtb:    { label: 'VTT',        icon: '🚵', cycling: true,  navSpeed: 12, maxPlausible: 120, offRouteM: 100 }
+  };
   const PLANNER_PROFILES = {
     hike: {
       label: 'Randonnée', short: 'Rando', icon: '🥾', activityMode: 'hike',
@@ -121,6 +129,17 @@
     routeFollowGuide: $('routeFollowGuide'), routeFollowName: $('routeFollowName'), routeFollowRemaining: $('routeFollowRemaining'), routeFollowProgress: $('routeFollowProgress'), routeFollowDeviation: $('routeFollowDeviation'),
     finishActivityModal: $('finishActivityModal'), finishSaveBtn: $('finishSaveBtn'), finishDiscardBtn: $('finishDiscardBtn'), finishCancelBtn: $('finishCancelBtn')
   };
+
+  function getActivityProfile(mode = state.activity.mode) {
+    return ACTIVITY_PROFILES[mode] || ACTIVITY_PROFILES.hike;
+  }
+
+  function activityModeForRoute(route) {
+    if (route?.plannerProfile && ACTIVITY_PROFILES[route.plannerProfile]) return route.plannerProfile;
+    if (route?.transportMode === 'bike') return 'road';
+    if (route?.transportMode === 'hike') return 'hike';
+    return state.mode === 'bike' ? 'road' : 'hike';
+  }
 
   function getPlannerProfile(mode = state.planner.mode) {
     return PLANNER_PROFILES[mode] || PLANNER_PROFILES.hike;
@@ -577,7 +596,7 @@
       toast('Une activité est déjà en cours. Termine-la avant de démarrer ce parcours.');
       return;
     }
-    state.activity.mode = state.mode;
+    state.activity.mode = activityModeForRoute(state.route);
     document.querySelectorAll('[data-activity-mode]').forEach(b => b.classList.toggle('active', b.dataset.activityMode === state.activity.mode));
     startActivity(state.route);
     showAppScreen('map', { scroll: false });
@@ -727,27 +746,33 @@
     }
   }
 
-  async function fetchOverpass(query) {
+  async function fetchOverpass(query, timeoutMs = 32000) {
     let lastError = null;
     for (const endpoint of OVERPASS_ENDPOINTS) {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 28000);
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
         const body = new URLSearchParams({ data: query });
         const res = await fetch(endpoint, {
           method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
           body,
           cache: 'no-store',
           signal: controller.signal
         });
-        if (!res.ok) throw new Error(`Overpass ${res.status}`);
-        return await res.json();
+        if (res.status === 429) throw new Error('Serveur OpenStreetMap occupé (429)');
+        if (!res.ok) throw new Error(`Serveur OpenStreetMap ${res.status}`);
+        const data = await res.json();
+        if (!data || !Array.isArray(data.elements)) throw new Error('Réponse OpenStreetMap invalide');
+        return data;
       } catch (err) {
         lastError = err;
       } finally {
         clearTimeout(timer);
       }
     }
+    if (lastError?.name === 'AbortError') throw new Error('Le serveur de tracés met trop de temps à répondre. Réessaie dans quelques secondes.');
+    if (/Failed to fetch/i.test(lastError?.message || '')) throw new Error('Impossible de joindre le serveur de tracés. Vérifie la connexion puis réessaie.');
     throw lastError || new Error('Service de recherche indisponible');
   }
 
@@ -807,7 +832,8 @@
             center: el.center || null,
             points: null,
             segments: null,
-            distanceKm: null
+            distanceKm: null,
+            geometryPromise: null
           };
         })
         .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'fr'))
@@ -892,21 +918,85 @@
     return chains[0];
   }
 
-  async function ensureHikeGeometry(result) {
-    if (result.points?.length > 1 && result.segments?.length) return result;
-    const query = `[out:json][timeout:25];relation(${result.id});out tags geom;`;
-    const data = await fetchOverpass(query);
-    const rel = (data.elements || []).find(el => el.type === 'relation' && Number(el.id) === Number(result.id));
-    if (!rel) throw new Error('Tracé de cette randonnée indisponible');
-    const segments = relationSegmentsFromElement(rel);
-    if (!segments.length) throw new Error('Cette relation OSM ne contient pas de tracé exploitable');
+  function parseHikeGpxGeometry(text) {
+    const xml = new DOMParser().parseFromString(text, 'application/xml');
+    if (xml.querySelector('parsererror')) throw new Error('GPX de la randonnée illisible');
+    let segments = [...xml.querySelectorAll('trkseg')].map(seg => [...seg.querySelectorAll('trkpt')].map(n => ({
+      lat: Number(n.getAttribute('lat')),
+      lon: Number(n.getAttribute('lon')),
+      ele: n.querySelector('ele') ? Number(n.querySelector('ele').textContent) : null
+    })).filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon))).filter(seg => seg.length > 1);
+    if (!segments.length) {
+      const routePts = [...xml.querySelectorAll('rtept')].map(n => ({
+        lat: Number(n.getAttribute('lat')),
+        lon: Number(n.getAttribute('lon')),
+        ele: n.querySelector('ele') ? Number(n.querySelector('ele').textContent) : null
+      })).filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon));
+      if (routePts.length > 1) segments = [routePts];
+    }
+    if (!segments.length) throw new Error('Aucun tracé exploitable dans le GPX');
     const points = stitchHikeSegments(segments);
     if (points.length < 2) throw new Error('Impossible de reconstruire le tracé');
-    result.segments = segments;
-    result.points = points;
-    result.distanceKm = segments.reduce((sum, seg) => sum + routeDistance(seg), 0);
-    renderHikeFinderResults();
-    return result;
+    return { segments, points };
+  }
+
+  async function fetchWaymarkedHikeGeometry(result) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 14000);
+    try {
+      const url = `${WAYMARKED_HIKING_API}/details/relation/${encodeURIComponent(result.id)}/geometry/gpx`;
+      const res = await fetch(url, { cache: 'no-store', signal: controller.signal });
+      if (!res.ok) throw new Error(`Waymarked Trails ${res.status}`);
+      const text = await res.text();
+      return parseHikeGpxGeometry(text);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function fetchOverpassHikeGeometry(result) {
+    const query = `[out:json][timeout:30];relation(${result.id});out geom qt;`;
+    const data = await fetchOverpass(query, 35000);
+    const rel = (data.elements || []).find(el => el.type === 'relation' && Number(el.id) === Number(result.id));
+    let segments = rel ? relationSegmentsFromElement(rel) : [];
+    if (!segments.length) {
+      const wayQuery = `[out:json][timeout:30];relation(${result.id})->.r;way(r.r);out geom qt;`;
+      const wayData = await fetchOverpass(wayQuery, 35000);
+      segments = (wayData.elements || [])
+        .filter(el => el.type === 'way' && Array.isArray(el.geometry) && el.geometry.length > 1)
+        .map(el => el.geometry.map(g => ({ lat: Number(g.lat), lon: Number(g.lon), ele: null }))
+          .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon)))
+        .filter(seg => seg.length > 1);
+    }
+    if (!segments.length) throw new Error('Cette randonnée ne fournit pas de tracé exploitable');
+    const points = stitchHikeSegments(segments);
+    if (points.length < 2) throw new Error('Impossible de reconstruire le tracé');
+    return { segments, points };
+  }
+
+  async function ensureHikeGeometry(result) {
+    if (result.points?.length > 1 && result.segments?.length) return result;
+    if (result.geometryPromise) return result.geometryPromise;
+
+    result.geometryPromise = (async () => {
+      let geometry = null;
+      try {
+        geometry = await fetchWaymarkedHikeGeometry(result);
+      } catch (_) {
+        geometry = await fetchOverpassHikeGeometry(result);
+      }
+      result.segments = geometry.segments;
+      result.points = geometry.points;
+      result.distanceKm = geometry.segments.reduce((sum, seg) => sum + routeDistance(seg), 0);
+      renderHikeFinderResults();
+      return result;
+    })();
+
+    try {
+      return await result.geometryPromise;
+    } finally {
+      result.geometryPromise = null;
+    }
   }
 
   function drawHikePreview(result) {
@@ -943,7 +1033,7 @@
     if (!result) return;
     const oldText = btn.textContent;
     btn.disabled = true;
-    if (btn.dataset.hikeAction !== 'show') btn.textContent = '…';
+    btn.textContent = btn.dataset.hikeAction === 'show' ? '…' : 'Chargement…';
     try {
       await ensureHikeGeometry(result);
       if (btn.dataset.hikeAction === 'show') {
@@ -964,7 +1054,10 @@
         }
       }
     } catch (err) {
-      toast(err.message || 'Impossible de charger cette randonnée.');
+      const message = err?.name === 'AbortError'
+        ? 'Le service de tracé est trop lent. Réessaie dans quelques secondes.'
+        : (err.message || 'Impossible de charger cette randonnée.');
+      toast(message);
     } finally {
       btn.disabled = false;
       btn.textContent = oldText;
@@ -1288,6 +1381,7 @@
 
   function startActivity(routeToFollow = null) {
     if (state.planner.active) stopPlanner(true);
+    if (routeToFollow) state.activity.mode = activityModeForRoute(routeToFollow);
     clearActivityTrack();
     clearActivityTarget();
     state.activity.followRoute = routeToFollow || null;
@@ -1302,9 +1396,10 @@
     state.activity.points = [];
     state.activity.distanceKm = 0;
     state.activity.currentSpeed = 0;
+    const activityProfile = getActivityProfile();
     state.activity.name = routeToFollow
-      ? `${routeToFollow.name} · ${new Date().toLocaleString('fr-FR', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})}`
-      : `${state.activity.mode === 'bike' ? 'Sortie vélo' : 'Randonnée'} ${new Date().toLocaleString('fr-FR', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})}`;
+      ? `${routeToFollow.name} · ${activityProfile.label} · ${new Date().toLocaleString('fr-FR', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})}`
+      : `${activityProfile.label} ${new Date().toLocaleString('fr-FR', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})}`;
     state.activity.line = L.polyline([], { color:'#fb7185', weight:5, opacity:.96 }).addTo(state.map);
     startLocation(false);
     if (state.location) recordActivityPoint(state.location, true);
@@ -1340,7 +1435,7 @@
       const d = haversine(prev, p);
       const dt = Math.max(0.5, (p.timestamp - prev.timestamp) / 1000);
       const computedSpeed = (d / dt) * 3600;
-      const maxPlausible = state.activity.mode === 'bike' ? 120 : 35;
+      const maxPlausible = getActivityProfile().maxPlausible;
       if (computedSpeed > maxPlausible) return;
       if (!force && d < 0.002 && dt < 8) {
         state.activity.currentSpeed = Number.isFinite(loc.speed) ? loc.speed : computedSpeed;
@@ -1462,7 +1557,7 @@
       ui.activityStartBtn.textContent = '▶ Démarrer';
       ui.activityExportBtn.classList.add('hidden');
       ui.activityStats.classList.add('hidden');
-      ui.activityHelp.textContent = 'Choisis randonnée ou vélo, puis démarre. La trace sera dessinée en direct sur la carte.';
+      ui.activityHelp.textContent = 'Choisis randonnée, vélo route, gravel ou VTT, puis démarre. La trace sera dessinée en direct sur la carte.';
       hideRouteFollowGuide();
       syncActivityMapPanel();
       return;
@@ -1476,7 +1571,8 @@
     const speed = `${Math.max(0, a.currentSpeed || 0).toFixed(1).replace('.', ',')} km/h`;
     const avgSpeed = `${Math.max(0, avg).toFixed(1).replace('.', ',')} km/h`;
 
-    ui.activityTitle.textContent = a.status === 'finished' ? a.name : (a.mode === 'bike' ? 'Sortie vélo en cours' : 'Randonnée en cours');
+    const activityProfile = getActivityProfile(a.mode);
+    ui.activityTitle.textContent = a.status === 'finished' ? a.name : `${activityProfile.label} en cours`;
     ui.activityDistance.textContent = distance;
     ui.activityTime.textContent = time;
     ui.activitySpeed.textContent = speed;
@@ -1497,7 +1593,7 @@
         : (a.followRoute ? `Suivi du GPX « ${a.followRoute.name} » en cours.` : 'Enregistrement GPS en cours. Le déplacement de la carte ne coupe pas le suivi.');
     }
 
-    ui.activityMapTitle.textContent = a.mode === 'bike' ? '🚴 Vélo' : '🥾 Randonnée';
+    ui.activityMapTitle.textContent = `${activityProfile.icon} ${activityProfile.label}`;
     ui.activityMapStatus.textContent = a.status === 'paused' ? 'EN PAUSE' : 'GPS · enregistrement';
     ui.activityMapDistance.textContent = distance;
     ui.activityMapTime.textContent = time;
@@ -1521,7 +1617,7 @@
 
   function exportActivity() {
     if (state.activity.points.length < 2) return;
-    downloadGpx(state.activity.name || 'Activité', state.activity.points, 'activity');
+    downloadGpx(state.activity.name || 'Activité', state.activity.points, 'activity', getActivityProfile().label);
   }
 
   function syncActivityMapPanel() {
@@ -1555,7 +1651,7 @@
     const remaining = Math.max(0, total - travelledOnRoute);
     const progress = total > 0 ? Math.min(100, Math.max(0, travelledOnRoute / total * 100)) : 0;
     const deviationM = Math.round(bestKm * 1000);
-    const threshold = state.activity.mode === 'bike' ? 120 : 80;
+    const threshold = getActivityProfile(state.activity.mode).offRouteM;
 
     ui.routeFollowGuide.classList.remove('hidden');
     ui.routeFollowName.textContent = route.name || 'Parcours';
@@ -1627,7 +1723,7 @@
     const bearing = initialBearing(from, a.target);
     const heading = Number.isFinite(from.heading) ? from.heading : null;
     const relative = heading == null ? null : normalizeSignedAngle(bearing - heading);
-    const navSpeed = a.currentSpeed >= 1 ? a.currentSpeed : (a.mode === 'bike' ? 20 : 4);
+    const navSpeed = a.currentSpeed >= 1 ? a.currentSpeed : getActivityProfile(a.mode).navSpeed;
     const etaMs = (distanceKm / Math.max(navSpeed, 0.5)) * 3600000;
 
     ui.targetDistance.textContent = distanceKm < 1 ? `${Math.round(distanceKm * 1000)} m` : `${distanceKm.toFixed(2).replace('.', ',')} km`;
@@ -1742,14 +1838,14 @@
     return `${h}h${String(m).padStart(2,'0')}`;
   }
 
-  function downloadGpx(name, points, type = 'route') {
+  function downloadGpx(name, points, type = 'route', activityType = '') {
     const safeName = (name || 'Rando Radar').replace(/[<>:"/\\|?*]+/g, '-').trim() || 'Rando-Radar';
     const trkpts = points.map(p => {
       const ele = Number.isFinite(Number(p.ele)) ? `<ele>${Number(p.ele).toFixed(1)}</ele>` : '';
       const time = p.time ? `<time>${new Date(p.time).toISOString()}</time>` : '';
       return `      <trkpt lat="${Number(p.lat).toFixed(7)}" lon="${Number(p.lon).toFixed(7)}">${ele}${time}</trkpt>`;
     }).join('\n');
-    const gpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Rando Radar" xmlns="http://www.topografix.com/GPX/1/1">\n  <metadata><name>${xmlEscape(name || safeName)}</name></metadata>\n  <trk><name>${xmlEscape(name || safeName)}</name><type>${type === 'activity' ? 'activity' : 'route'}</type><trkseg>\n${trkpts}\n  </trkseg></trk>\n</gpx>`;
+    const gpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Rando Radar" xmlns="http://www.topografix.com/GPX/1/1">\n  <metadata><name>${xmlEscape(name || safeName)}</name></metadata>\n  <trk><name>${xmlEscape(name || safeName)}</name><type>${xmlEscape(type === 'activity' ? (activityType || 'activity') : 'route')}</type><trkseg>\n${trkpts}\n  </trkseg></trk>\n</gpx>`;
     const blob = new Blob([gpx], { type:'application/gpx+xml;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1913,8 +2009,11 @@
         toast('Termine l’activité avant de changer de mode.');
         return;
       }
-      state.activity.mode = btn.dataset.activityMode;
+      const nextMode = btn.dataset.activityMode;
+      if (!ACTIVITY_PROFILES[nextMode]) return;
+      state.activity.mode = nextMode;
       document.querySelectorAll('[data-activity-mode]').forEach(b => b.classList.toggle('active', b === btn));
+      updateActivityUI();
     }));
     ui.activityPauseBtn.addEventListener('click', toggleActivityPause);
     ui.activityStopBtn.addEventListener('click', finishActivity);

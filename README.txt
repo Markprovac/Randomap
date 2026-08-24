@@ -48,4 +48,4 @@ V1.10.13 : persistance automatique de l’activité en cours. Un pull-to-refresh
 
 V1.10.14 : correction de la restauration du type d’activité. Après rechargement/pull-to-refresh, le sélecteur Randonnée / Vélo route / Gravel / VTT se resynchronise avec le mode réellement enregistré, y compris pendant une activité restaurée.
 
-V1.10.15 : blocage du geste pull-to-refresh sur Carte, Activité, Parcours et Météo. Le rechargement par tirage vers le bas reste autorisé uniquement sur l’écran Infos où la version chargée est visible. Le bouton Actualiser du navigateur reste hors du contrôle de la PWA.
+V1.10.16 : blocage du geste pull-to-refresh sur Carte, Activité, Parcours et Météo. Le rechargement par tirage vers le bas reste autorisé uniquement sur l’écran Infos où la version chargée est visible. Le bouton Actualiser du navigateur reste hors du contrôle de la PWA.

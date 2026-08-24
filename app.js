@@ -1,4 +1,4 @@
-/* Rando Radar v1.10.15 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
+/* Rando Radar v1.10.16 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
 (() => {
   'use strict';
 
@@ -3315,7 +3315,7 @@
   const APP_SCREEN_NAMES = new Set(['map','activity','routes','weather','info']);
   let currentAppScreen = 'map';
 
-  // V1.10.15 : le pull-to-refresh Android/Chrome est autorisé uniquement
+  // V1.10.16 : le pull-to-refresh Android/Chrome est autorisé uniquement
   // sur l'écran Infos (où la version chargée est visible).
   function updatePullToRefreshPolicy(screenName) {
     const allow = screenName === 'info';
@@ -3324,6 +3324,51 @@
     document.documentElement.classList.toggle('pull-refresh-locked', !allow);
     document.body.classList.toggle('pull-refresh-locked', !allow);
   }
+
+  // V1.10.16 : bloque uniquement le geste descendant depuis le haut de page.
+  // Le scroll vertical normal reste intact.
+  let pullGestureStartY = null;
+  let pullGestureStartedAtTop = false;
+  let pullGestureTarget = null;
+
+  function isInsideOwnScrollableArea(target) {
+    return !!target?.closest?.('.activity-map-panel, .finder-map-detail, .hike-finder-map-results, .hourly-scroll, #map');
+  }
+
+  document.addEventListener('touchstart', (event) => {
+    if (event.touches.length !== 1) {
+      pullGestureStartY = null;
+      return;
+    }
+    pullGestureStartY = event.touches[0].clientY;
+    pullGestureStartedAtTop = window.scrollY <= 1;
+    pullGestureTarget = event.target;
+  }, { passive: true });
+
+  document.addEventListener('touchmove', (event) => {
+    if (currentAppScreen === 'info') return;
+    if (pullGestureStartY == null || !pullGestureStartedAtTop || event.touches.length !== 1) return;
+    if (isInsideOwnScrollableArea(pullGestureTarget)) return;
+
+    const deltaY = event.touches[0].clientY - pullGestureStartY;
+    // Doigt vers le bas + page déjà en butée haute = geste de rafraîchissement.
+    // Doigt vers le haut = scroll normal, jamais bloqué.
+    if (deltaY > 10 && window.scrollY <= 1) {
+      event.preventDefault();
+    }
+  }, { passive: false });
+
+  document.addEventListener('touchend', () => {
+    pullGestureStartY = null;
+    pullGestureStartedAtTop = false;
+    pullGestureTarget = null;
+  }, { passive: true });
+
+  document.addEventListener('touchcancel', () => {
+    pullGestureStartY = null;
+    pullGestureStartedAtTop = false;
+    pullGestureTarget = null;
+  }, { passive: true });
 
   function showAppScreen(name, options = {}) {
     if (!APP_SCREEN_NAMES.has(name)) name = 'map';
@@ -4092,7 +4137,7 @@
   }
 
   function registerSW() {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.15', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.16', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
   }
 
   initMap();

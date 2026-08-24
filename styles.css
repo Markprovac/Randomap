@@ -1512,11 +1512,10 @@ body.activity-choice-open{overflow:hidden}
    Le défilement vertical normal reste disponible partout.
    ========================================================= */
 html.pull-refresh-locked,
-body.pull-refresh-locked {
-  overscroll-behavior-y: none;
-}
-
+body.pull-refresh-locked,
 html.pull-refresh-allowed,
 body.pull-refresh-allowed {
+  /* V1.10.16 : ne plus bloquer le défilement global via CSS.
+     Le pull-to-refresh est filtré finement en JavaScript. */
   overscroll-behavior-y: auto;
 }

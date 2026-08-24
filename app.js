@@ -1,4 +1,4 @@
-/* Rando Radar v1.10.0 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
+/* Rando Radar v1.10.2 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
 (() => {
   'use strict';
 
@@ -32,19 +32,19 @@
     road: {
       label: 'Vélo route', short: 'Route', icon: '🚴', activityMode: 'road',
       costing: 'bicycle',
-      costingOptions: { bicycle: { bicycle_type: 'Road', use_roads: 1.0, use_hills: 0.5 } },
+      costingOptions: { bicycle: { bicycle_type: 'Road', use_roads: 1.0, use_hills: 0.5, avoid_bad_surfaces: 0.95 } },
       description: 'routes et surfaces adaptées au vélo de route privilégiées'
     },
     gravel: {
       label: 'Gravel', short: 'Gravel', icon: '🚲', activityMode: 'gravel',
       costing: 'bicycle',
-      costingOptions: { bicycle: { bicycle_type: 'Cross', use_roads: 0.5, use_hills: 0.5 } },
+      costingOptions: { bicycle: { bicycle_type: 'Cross', use_roads: 0.5, use_hills: 0.5, avoid_bad_surfaces: 0.35 } },
       description: 'routes, voies cyclables et pistes roulantes acceptées'
     },
     mtb: {
       label: 'VTT', short: 'VTT', icon: '🚵', activityMode: 'mtb',
       costing: 'bicycle',
-      costingOptions: { bicycle: { bicycle_type: 'Mountain', use_roads: 0.15, use_hills: 0.65 } },
+      costingOptions: { bicycle: { bicycle_type: 'Mountain', use_roads: 0.15, use_hills: 0.65, avoid_bad_surfaces: 0.05 } },
       description: 'chemins et pistes tout-terrain davantage favorisés'
     }
   };
@@ -81,6 +81,7 @@
       lastRequestAt: 0,
       requestSerial: 0,
       routing: false,
+      routeValid: false,
     },
     hikeFinder: {
       active: false,
@@ -1870,6 +1871,7 @@
     state.planner.active = true;
     state.planner.waypoints = [];
     state.planner.routePoints = [];
+    state.planner.routeValid = false;
     clearPlannerLayers();
     ui.plannerPanel.classList.remove('hidden');
     ui.mapWrap.classList.add('planning');
@@ -1906,10 +1908,12 @@
     updatePlannerButtons();
     if (state.planner.waypoints.length === 1) {
       state.planner.routePoints = [{ ...point }];
+      state.planner.routeValid = false;
       ui.plannerStatus.textContent = `${getPlannerProfile().icon} ${getPlannerProfile().label} · Départ placé. Ajoute l’arrivée ou une étape.`;
       drawPlannerLine(state.planner.routePoints, true);
       return;
     }
+    state.planner.routeValid = false;
     ui.plannerStatus.textContent = 'Calcul du chemin…';
     drawPlannerLine(state.planner.waypoints, true);
     schedulePlannerRoute();
@@ -1929,7 +1933,7 @@
     const n = state.planner.waypoints.length;
     ui.plannerUndoBtn.disabled = n === 0;
     ui.plannerClearBtn.disabled = n === 0;
-    ui.plannerSaveBtn.disabled = n < 2 || state.planner.routing;
+    ui.plannerSaveBtn.disabled = n < 2 || state.planner.routing || !state.planner.routeValid;
   }
 
   function undoPlannerWaypoint() {
@@ -1939,11 +1943,13 @@
     updatePlannerButtons();
     if (!state.planner.waypoints.length) {
       state.planner.routePoints = [];
+      state.planner.routeValid = false;
       if (state.planner.line) state.map.removeLayer(state.planner.line);
       state.planner.line = null;
       ui.plannerStatus.textContent = `${getPlannerProfile().icon} ${getPlannerProfile().label} · Touchez la carte pour placer le départ.`;
     } else if (state.planner.waypoints.length === 1) {
       state.planner.routePoints = [{...state.planner.waypoints[0]}];
+      state.planner.routeValid = false;
       drawPlannerLine(state.planner.routePoints, true);
       ui.plannerStatus.textContent = `${getPlannerProfile().icon} ${getPlannerProfile().label} · Ajoutez une arrivée ou une étape.`;
     } else {
@@ -1981,9 +1987,65 @@
     state.planner.routeTimer = setTimeout(routePlannerWaypoints, wait);
   }
 
+  async function fetchPlannerJson(url, options = {}, timeoutMs = 6000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort('routing-timeout'), timeoutMs);
+    try {
+      const res = await fetch(url, { cache: 'no-store', ...options, signal: controller.signal });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return await res.json();
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  function plannerCoordinatesFromResponse(data) {
+    const geometry = data?.routes?.[0]?.geometry;
+    if (geometry?.type === 'LineString' && Array.isArray(geometry.coordinates)) return geometry.coordinates;
+    if (Array.isArray(geometry?.coordinates)) return geometry.coordinates;
+    return null;
+  }
+
+  async function routeWithOsrm(profile, serial) {
+    const prefix = profile.activityMode === 'hike' ? 'routed-foot' : 'routed-bike';
+    const coords = state.planner.waypoints.map(p => `${p.lon.toFixed(6)},${p.lat.toFixed(6)}`).join(';');
+    const url = `https://routing.openstreetmap.de/${prefix}/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=false&alternatives=false`;
+    const data = await fetchPlannerJson(url, {}, 7000);
+    if (serial !== state.planner.requestSerial) return null;
+    const coordsOut = plannerCoordinatesFromResponse(data);
+    if (!Array.isArray(coordsOut) || coordsOut.length < 2) throw new Error('Aucun chemin OSM trouvé');
+    return coordsOut;
+  }
+
+  async function routeWithValhalla(profile, serial) {
+    const payload = {
+      locations: state.planner.waypoints.map((p, i, arr) => ({
+        lat: Number(p.lat.toFixed(6)),
+        lon: Number(p.lon.toFixed(6)),
+        type: (i === 0 || i === arr.length - 1) ? 'break' : 'through'
+      })),
+      costing: profile.costing,
+      costing_options: profile.costingOptions,
+      format: 'osrm',
+      shape_format: 'geojson',
+      directions_type: 'none',
+      units: 'kilometers',
+      id: 'rando-radar-web'
+    };
+
+    // GET évite la requête CORS preflight provoquée par le POST + en-têtes personnalisés.
+    const url = `${VALHALLA_ROUTE_URL}?json=${encodeURIComponent(JSON.stringify(payload))}`;
+    const data = await fetchPlannerJson(url, { method: 'GET', mode: 'cors' }, 4500);
+    if (serial !== state.planner.requestSerial) return null;
+    const coordsOut = plannerCoordinatesFromResponse(data);
+    if (!Array.isArray(coordsOut) || coordsOut.length < 2) throw new Error('Aucun chemin Valhalla trouvé');
+    return coordsOut;
+  }
+
   async function routePlannerWaypoints() {
     if (state.planner.waypoints.length < 2) return;
     state.planner.routing = true;
+    state.planner.routeValid = false;
     state.planner.lastRequestAt = Date.now();
     const serial = ++state.planner.requestSerial;
     const profile = getPlannerProfile();
@@ -1991,62 +2053,41 @@
     ui.plannerStatus.textContent = `${profile.icon} Calcul ${profile.label}…`;
 
     try {
-      const payload = {
-        locations: state.planner.waypoints.map(p => ({
-          lat: Number(p.lat.toFixed(6)),
-          lon: Number(p.lon.toFixed(6))
-        })),
-        costing: profile.costing,
-        costing_options: profile.costingOptions,
-        format: 'osrm',
-        shape_format: 'geojson',
-        directions_type: 'none',
-        units: 'kilometers'
-      };
+      let coordsOut = null;
+      let usedFallback = false;
 
-      const res = await fetch(VALHALLA_ROUTE_URL, {
-        method: 'POST',
-        mode: 'cors',
-        cache: 'no-store',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Client-Id': 'markprovac.github.io-rando-radar'
-        },
-        body: JSON.stringify(payload)
-      });
-      if (!res.ok) throw new Error(`Valhalla ${res.status}`);
-      const data = await res.json();
-      if (serial !== state.planner.requestSerial) return;
-      const coordsOut = data.routes?.[0]?.geometry?.coordinates;
-      if (!Array.isArray(coordsOut) || coordsOut.length < 2) throw new Error('Aucun chemin trouvé');
+      // Le profil randonnée utilise directement le routeur piéton OSM, très robuste.
+      // Les profils vélo essaient d'abord Valhalla pour conserver Route / Gravel / VTT.
+      if (profile.activityMode === 'hike') {
+        coordsOut = await routeWithOsrm(profile, serial);
+      } else {
+        try {
+          coordsOut = await routeWithValhalla(profile, serial);
+        } catch (advancedErr) {
+          if (serial !== state.planner.requestSerial) return;
+          usedFallback = true;
+          ui.plannerStatus.textContent = `${profile.icon} Routeur ${profile.label} indisponible · secours OSM vélo…`;
+          coordsOut = await routeWithOsrm(profile, serial);
+        }
+      }
 
+      if (serial !== state.planner.requestSerial || !coordsOut) return;
       state.planner.routePoints = coordsOut.map(c => ({ lon: Number(c[0]), lat: Number(c[1]), ele: null }));
+      state.planner.routeValid = true;
       drawPlannerLine(state.planner.routePoints, false);
       const km = routeDistance(state.planner.routePoints);
-      ui.plannerStatus.textContent = `${profile.icon} ${km.toFixed(1)} km · ${profile.label} · ${profile.description}.`;
-    } catch (advancedErr) {
-      // Secours : ancien routeur OSM. Pour les vélos, ce repli est générique
-      // et ne peut pas distinguer Route / Gravel / VTT.
-      try {
-        const prefix = profile.activityMode === 'hike' ? 'routed-foot' : 'routed-bike';
-        const coords = state.planner.waypoints.map(p => `${p.lon.toFixed(6)},${p.lat.toFixed(6)}`).join(';');
-        const url = `https://routing.openstreetmap.de/${prefix}/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=false&alternatives=false`;
-        const res = await fetch(url, { cache: 'no-store' });
-        if (!res.ok) throw new Error('Routeur de secours indisponible');
-        const data = await res.json();
-        if (serial !== state.planner.requestSerial) return;
-        const coordsOut = data.routes?.[0]?.geometry?.coordinates;
-        if (!Array.isArray(coordsOut) || coordsOut.length < 2) throw new Error('Aucun chemin trouvé');
-        state.planner.routePoints = coordsOut.map(c => ({ lon: Number(c[0]), lat: Number(c[1]), ele: null }));
-        drawPlannerLine(state.planner.routePoints, false);
-        const km = routeDistance(state.planner.routePoints);
-        ui.plannerStatus.textContent = `${profile.icon} ${km.toFixed(1)} km · ${profile.label} · profil de secours générique utilisé.`;
-      } catch (fallbackErr) {
-        if (serial !== state.planner.requestSerial) return;
-        state.planner.routePoints = state.planner.waypoints.map(p => ({...p, ele:null}));
-        drawPlannerLine(state.planner.routePoints, true);
-        ui.plannerStatus.textContent = 'Routeurs indisponibles : liaison directe affichée. Vous pouvez quand même enregistrer.';
-      }
+      ui.plannerStatus.textContent = usedFallback
+        ? `${profile.icon} ${km.toFixed(1)} km · chemin OSM suivi · profil vélo générique de secours.`
+        : `${profile.icon} ${km.toFixed(1)} km · ${profile.label} · ${profile.description}.`;
+    } catch (err) {
+      if (serial !== state.planner.requestSerial) return;
+      state.planner.routePoints = state.planner.waypoints.map(p => ({ ...p, ele: null }));
+      state.planner.routeValid = false;
+      drawPlannerLine(state.planner.routePoints, true);
+      const isTimeout = err?.name === 'AbortError' || String(err?.message || '').includes('routing-timeout');
+      ui.plannerStatus.textContent = isTimeout
+        ? 'Le routeur ne répond pas. Ligne provisoire affichée — réessaie dans quelques secondes.'
+        : 'Impossible de calculer le chemin. Ligne provisoire affichée — le parcours ne peut pas être enregistré ainsi.';
     } finally {
       if (serial === state.planner.requestSerial) {
         state.planner.routing = false;
@@ -3344,6 +3385,7 @@
       const nextMode = btn.dataset.plannerMode;
       if (!PLANNER_PROFILES[nextMode]) return;
       state.planner.mode = nextMode;
+      state.planner.routeValid = false;
       const profile = getPlannerProfile();
       document.querySelectorAll('[data-planner-mode]').forEach(b => b.classList.toggle('active', b === btn));
       ui.plannerStatus.textContent = `${profile.icon} ${profile.label} · ${profile.description}.`;
@@ -3407,7 +3449,7 @@
   }
 
   function registerSW() {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.0', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.2', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
   }
 
   initMap();

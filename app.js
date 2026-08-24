@@ -1,4 +1,4 @@
-/* Rando Radar v1.10.3 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
+/* Rando Radar v1.10.6 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
 (() => {
   'use strict';
 
@@ -32,7 +32,7 @@
     road: {
       label: 'Vélo route', short: 'Route', icon: '🚴', activityMode: 'road',
       costing: 'bicycle',
-      costingOptions: { bicycle: { bicycle_type: 'Road', use_roads: 1.0, use_hills: 0.5, avoid_bad_surfaces: 0.95 } },
+      costingOptions: { bicycle: { bicycle_type: 'Road', use_roads: 1.0, use_hills: 0.5, avoid_bad_surfaces: 1.0 } },
       description: 'routes et surfaces adaptées au vélo de route privilégiées'
     },
     gravel: {
@@ -1933,8 +1933,9 @@
       return;
     }
     state.planner.routeValid = false;
-    ui.plannerStatus.textContent = 'Calcul du chemin…';
-    drawPlannerLine(state.planner.waypoints, true);
+    ui.plannerStatus.textContent = `${getPlannerProfile().icon} Calcul du parcours…`;
+    // On ne dessine plus de liaison droite provisoire : seuls les vrais tracés routés
+    // sont affichés. L'ancien tracé routé reste éventuellement visible pendant le recalcul.
     schedulePlannerRoute();
   }
 
@@ -2036,6 +2037,154 @@
     return coordsOut;
   }
 
+  function pointSegmentDistanceMeters(p, a, b) {
+    // Approximation locale suffisante pour faire correspondre un point du tracé
+    // à la voie OSM la plus proche (rayons de quelques dizaines de mètres).
+    const lat0 = rad(p.lat);
+    const kx = 111320 * Math.cos(lat0);
+    const ky = 110540;
+    const ax = (a.lon - p.lon) * kx, ay = (a.lat - p.lat) * ky;
+    const bx = (b.lon - p.lon) * kx, by = (b.lat - p.lat) * ky;
+    const vx = bx - ax, vy = by - ay;
+    const vv = vx * vx + vy * vy;
+    let t = vv > 0 ? -((ax * vx) + (ay * vy)) / vv : 0;
+    t = Math.max(0, Math.min(1, t));
+    const x = ax + t * vx, y = ay + t * vy;
+    return Math.hypot(x, y);
+  }
+
+  function pointWayDistanceMeters(point, geometry) {
+    if (!Array.isArray(geometry) || geometry.length < 2) return Infinity;
+    let best = Infinity;
+    for (let i = 1; i < geometry.length; i++) {
+      const a = geometry[i - 1], b = geometry[i];
+      if (!Number.isFinite(a?.lat) || !Number.isFinite(a?.lon) || !Number.isFinite(b?.lat) || !Number.isFinite(b?.lon)) continue;
+      best = Math.min(best, pointSegmentDistanceMeters(point, a, b));
+    }
+    return best;
+  }
+
+  function roadWayAssessment(tags = {}) {
+    const highway = String(tags.highway || '').toLowerCase();
+    const surface = String(tags.surface || '').toLowerCase();
+    const smoothness = String(tags.smoothness || '').toLowerCase();
+    const bicycle = String(tags.bicycle || '').toLowerCase();
+    const paved = PAVED_SURFACES.has(surface);
+    const roughSurface = GRAVEL_SURFACES.has(surface);
+    const badSmoothness = ['bad','very_bad','horrible','very_horrible','impassable'].includes(smoothness);
+    const pathLike = ['track','path','bridleway','footway','pedestrian'].includes(highway);
+    const normalRoad = ['motorway','trunk','primary','secondary','tertiary','unclassified','residential','living_street','service','road'].includes(highway);
+    const cycleway = highway === 'cycleway';
+
+    // Profil Vélo route STRICT :
+    // - toute surface explicitement gravel/terre/non revêtue est rejetée ;
+    // - track/path/footway/etc. sans preuve de revêtement est rejeté ;
+    // - une vraie route sans tag surface reste acceptée (OSM ne renseigne pas
+    //   toujours surface=asphalt sur les routes ordinaires) ;
+    // - une piste cyclable reste acceptée sauf si sa surface est explicitement mauvaise.
+    let bad = false;
+    let reason = '';
+    if (bicycle === 'no') { bad = true; reason = 'interdit vélo'; }
+    else if (highway === 'steps') { bad = true; reason = 'escaliers'; }
+    else if (roughSurface) { bad = true; reason = `surface ${surface || 'non revêtue'}`; }
+    else if (badSmoothness) { bad = true; reason = 'surface dégradée'; }
+    else if (pathLike && !paved) { bad = true; reason = 'chemin/sentier non revêtu'; }
+    else if (!highway) { bad = true; reason = 'type de voie inconnu'; }
+    else if (!paved && !normalRoad && !cycleway) {
+      // Une voie atypique non explicitement revêtue n'est pas considérée sûre
+      // pour un vélo de route à pneus fins.
+      bad = true;
+      reason = 'revêtement non garanti';
+    }
+
+    return { bad, reason, highway, surface, paved, normalRoad, cycleway };
+  }
+
+  async function fetchOverpassFast(query, timeoutMs = 5200) {
+    let lastError = null;
+    // Contrôle secondaire : on limite volontairement à deux instances pour ne pas
+    // retarder longtemps le planificateur si Overpass est chargé.
+    for (const endpoint of OVERPASS_ENDPOINTS.slice(0, 2)) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort('road-surface-timeout'), timeoutMs);
+      try {
+        const body = new URLSearchParams({ data: query });
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+          body,
+          cache: 'no-store',
+          signal: controller.signal
+        });
+        if (!res.ok) throw new Error(`Overpass ${res.status}`);
+        const data = await res.json();
+        if (!data || !Array.isArray(data.elements)) throw new Error('Réponse Overpass invalide');
+        return data;
+      } catch (err) {
+        lastError = err;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    throw lastError || new Error('Contrôle surfaces indisponible');
+  }
+
+  async function inspectRoadRouteSurface(coordsOut, serial) {
+    const points = (coordsOut || []).map(c => ({ lon: Number(c[0]), lat: Number(c[1]) }))
+      .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon));
+    if (points.length < 2) return { inconclusive: true, shouldRefine: false, badRatio: 0 };
+
+    const km = routeDistance(points);
+    const count = Math.max(10, Math.min(48, Math.ceil(km / 0.40) + 1));
+    const samples = sampleRoute(points, count).map(x => x.point);
+    const query = `[out:json][timeout:12];(\n${samples.map(p =>
+      `way(around:32,${p.lat.toFixed(6)},${p.lon.toFixed(6)})[\"highway\"];`
+    ).join('\n')}\n);out tags geom;`;
+
+    let data;
+    try {
+      data = await fetchOverpassFast(query, 5200);
+    } catch (_) {
+      return { inconclusive: true, shouldRefine: false, badRatio: 0, matchedRatio: 0 };
+    }
+    if (serial !== state.planner.requestSerial) return null;
+
+    const ways = (data.elements || []).filter(el => el.type === 'way' && Array.isArray(el.geometry) && el.geometry.length > 1);
+    if (!ways.length) return { inconclusive: true, shouldRefine: false, badRatio: 0, matchedRatio: 0 };
+
+    let matched = 0, bad = 0;
+    const reasons = new Map();
+    for (const sample of samples) {
+      let best = null, bestD = Infinity;
+      for (const way of ways) {
+        const d = pointWayDistanceMeters(sample, way.geometry);
+        if (d < bestD) { bestD = d; best = way; }
+      }
+      if (!best || bestD > 24) continue;
+      matched++;
+      const assessment = roadWayAssessment(best.tags || {});
+      if (assessment.bad) {
+        bad++;
+        const key = assessment.reason || 'voie inadaptée';
+        reasons.set(key, (reasons.get(key) || 0) + 1);
+      }
+    }
+
+    const matchedRatio = matched / Math.max(samples.length, 1);
+    if (matched < Math.max(4, Math.ceil(samples.length * 0.40))) {
+      return { inconclusive: true, shouldRefine: false, badRatio: 0, matchedRatio };
+    }
+    const badRatio = bad / matched;
+    const topReasons = [...reasons.entries()].sort((a,b) => b[1] - a[1]).slice(0,2).map(([name]) => name);
+    return {
+      inconclusive: false,
+      shouldRefine: bad > 0,
+      badRatio,
+      matchedRatio,
+      reasons: topReasons
+    };
+  }
+
   async function routeWithValhalla(profile, serial) {
     const payload = {
       locations: state.planner.waypoints.map((p, i, arr) => ({
@@ -2054,7 +2203,7 @@
 
     // GET évite la requête CORS preflight provoquée par le POST + en-têtes personnalisés.
     const url = `${VALHALLA_ROUTE_URL}?json=${encodeURIComponent(JSON.stringify(payload))}`;
-    const data = await fetchPlannerJson(url, { method: 'GET', mode: 'cors' }, 4500);
+    const data = await fetchPlannerJson(url, { method: 'GET', mode: 'cors' }, 3500);
     if (serial !== state.planner.requestSerial) return null;
     const coordsOut = plannerCoordinatesFromResponse(data);
     if (!Array.isArray(coordsOut) || coordsOut.length < 2) throw new Error('Aucun chemin Valhalla trouvé');
@@ -2068,25 +2217,133 @@
     state.planner.lastRequestAt = Date.now();
     const serial = ++state.planner.requestSerial;
     const profile = getPlannerProfile();
+    const previousPoints = Array.isArray(state.planner.routePoints) ? state.planner.routePoints.map(p => ({...p})) : [];
+    const hadPreviousRoute = previousPoints.length > 1 && !!state.planner.line;
     updatePlannerButtons();
-    ui.plannerStatus.textContent = `${profile.icon} Calcul ${profile.label}…`;
+    ui.plannerStatus.textContent = `${profile.icon} Calcul du parcours ${profile.label}…`;
 
     try {
       let coordsOut = null;
+      let sourceLabel = '';
       let usedFallback = false;
 
-      // Le profil randonnée utilise directement le routeur piéton OSM, très robuste.
-      // Les profils vélo essaient d'abord Valhalla pour conserver Route / Gravel / VTT.
       if (profile.activityMode === 'hike') {
-        coordsOut = await routeWithOsrm(profile, serial);
+        // Randonnée : OSM piéton en priorité, comme dans les premières versions.
+        try {
+          coordsOut = await routeWithOsrm(profile, serial);
+          sourceLabel = 'OSM piéton';
+        } catch (osmErr) {
+          if (serial !== state.planner.requestSerial) return;
+          usedFallback = true;
+          ui.plannerStatus.textContent = `${profile.icon} OSM piéton indisponible · secours Valhalla…`;
+          coordsOut = await routeWithValhalla(profile, serial);
+          sourceLabel = 'Valhalla piéton';
+        }
+      } else if (profile.activityMode === 'road') {
+        // Vélo route : OSM est visible immédiatement pour conserver la réactivité.
+        // Ensuite on contrôle strictement les types de voies et les surfaces.
+        // Au moindre échantillon clairement non revêtu, Valhalla Road recalcule.
+        try {
+          coordsOut = await routeWithOsrm(profile, serial);
+          if (serial !== state.planner.requestSerial || !coordsOut) return;
+
+          const instantPoints = coordsOut.map(c => ({ lon: Number(c[0]), lat: Number(c[1]), ele: null }));
+          state.planner.routePoints = instantPoints;
+          state.planner.routeValid = false; // visible immédiatement, verrouillé pendant le contrôle
+          drawPlannerLine(instantPoints, false);
+          updatePlannerButtons();
+          ui.plannerStatus.textContent = `${profile.icon} ${routeDistance(instantPoints).toFixed(1)} km · OSM vélo · vérification revêtement…`;
+
+          let check = await inspectRoadRouteSurface(coordsOut, serial);
+          if (serial !== state.planner.requestSerial || !check) return;
+
+          // Si le contrôle OSM détecte une seule portion clairement incompatible
+          // OU si le contrôle est impossible, on préfère le profil Road de Valhalla.
+          if (check.shouldRefine || check.inconclusive) {
+            const why = check.shouldRefine && Array.isArray(check.reasons) && check.reasons.length
+              ? ` (${check.reasons.join(', ')})`
+              : '';
+            ui.plannerStatus.textContent = check.shouldRefine
+              ? `${profile.icon} Portion non adaptée détectée${why} · recalcul route revêtue…`
+              : `${profile.icon} Revêtement OSM non vérifiable · recalcul Valhalla Route…`;
+
+            try {
+              const refined = await routeWithValhalla(profile, serial);
+              if (serial !== state.planner.requestSerial || !refined) return;
+              coordsOut = refined;
+              sourceLabel = check.shouldRefine ? 'Valhalla Route · corrigé' : 'Valhalla Route · sécurité';
+
+              // Deuxième contrôle : on ne valide pas silencieusement un itinéraire
+              // Valhalla qui emprunterait encore une portion explicitement non revêtue.
+              const refinedCheck = await inspectRoadRouteSurface(refined, serial);
+              if (serial !== state.planner.requestSerial || !refinedCheck) return;
+              if (!refinedCheck.inconclusive && refinedCheck.shouldRefine) {
+                const why2 = Array.isArray(refinedCheck.reasons) && refinedCheck.reasons.length
+                  ? ` (${refinedCheck.reasons.join(', ')})`
+                  : '';
+                const refinedPoints = refined.map(c => ({ lon: Number(c[0]), lat: Number(c[1]), ele: null }));
+                state.planner.routePoints = refinedPoints;
+                state.planner.routeValid = false;
+                drawPlannerLine(refinedPoints, false);
+                ui.plannerStatus.textContent = `${profile.icon} ⚠ Aucun itinéraire 100 % adapté vélo route trouvé${why2}. Ajoute un point intermédiaire sur une route revêtue.`;
+                updatePlannerButtons();
+                return;
+              }
+              if (refinedCheck.inconclusive) {
+                sourceLabel += ' · revêtement partiellement non vérifiable';
+              }
+            } catch (_) {
+              if (serial !== state.planner.requestSerial) return;
+              // Si OSM était explicitement mauvais, on ne permet PAS d'enregistrer
+              // ce trajet juste parce que Valhalla est indisponible.
+              if (check.shouldRefine) {
+                state.planner.routePoints = instantPoints;
+                state.planner.routeValid = false;
+                drawPlannerLine(instantPoints, false);
+                ui.plannerStatus.textContent = `${profile.icon} ⚠ Le tracé OSM contient une portion non revêtue et Valhalla Route ne répond pas. Enregistrement bloqué.`;
+                updatePlannerButtons();
+                return;
+              }
+              // Contrôle seulement inconclusif : on garde le tracé OSM avec avertissement.
+              coordsOut = coordsOut;
+              sourceLabel = 'OSM vélo · ⚠ revêtement non vérifiable';
+            }
+          } else {
+            sourceLabel = 'OSM vélo · revêtement contrôlé';
+          }
+        } catch (osmErr) {
+          if (serial !== state.planner.requestSerial) return;
+          usedFallback = true;
+          ui.plannerStatus.textContent = `${profile.icon} OSM vélo indisponible · secours Valhalla Route…`;
+          coordsOut = await routeWithValhalla(profile, serial);
+          sourceLabel = 'Valhalla Route';
+
+          // Même en secours, on essaie de vérifier qu'aucune portion explicitement
+          // gravel/terre/path non revêtue n'est présente.
+          const fallbackCheck = await inspectRoadRouteSurface(coordsOut, serial);
+          if (serial !== state.planner.requestSerial || !fallbackCheck) return;
+          if (!fallbackCheck.inconclusive && fallbackCheck.shouldRefine) {
+            const fallbackPoints = coordsOut.map(c => ({ lon: Number(c[0]), lat: Number(c[1]), ele: null }));
+            state.planner.routePoints = fallbackPoints;
+            state.planner.routeValid = false;
+            drawPlannerLine(fallbackPoints, false);
+            ui.plannerStatus.textContent = `${profile.icon} ⚠ Le seul itinéraire trouvé comporte une portion non revêtue. Enregistrement bloqué.`;
+            updatePlannerButtons();
+            return;
+          }
+          if (fallbackCheck.inconclusive) sourceLabel += ' · revêtement partiellement non vérifiable';
+        }
       } else {
+        // Gravel / VTT : profils spécialisés Valhalla en priorité.
         try {
           coordsOut = await routeWithValhalla(profile, serial);
+          sourceLabel = profile.activityMode === 'gravel' ? 'Valhalla Cross' : 'Valhalla Mountain';
         } catch (advancedErr) {
           if (serial !== state.planner.requestSerial) return;
           usedFallback = true;
-          ui.plannerStatus.textContent = `${profile.icon} Routeur ${profile.label} indisponible · secours OSM vélo…`;
+          ui.plannerStatus.textContent = `${profile.icon} ${profile.label} indisponible · secours OSM vélo…`;
           coordsOut = await routeWithOsrm(profile, serial);
+          sourceLabel = 'OSM vélo générique';
         }
       }
 
@@ -2096,17 +2353,26 @@
       drawPlannerLine(state.planner.routePoints, false);
       const km = routeDistance(state.planner.routePoints);
       ui.plannerStatus.textContent = usedFallback
-        ? `${profile.icon} ${km.toFixed(1)} km · chemin OSM suivi · profil vélo générique de secours.`
-        : `${profile.icon} ${km.toFixed(1)} km · ${profile.label} · ${profile.description}.`;
+        ? `${profile.icon} ${km.toFixed(1)} km · ${sourceLabel} (secours).`
+        : `${profile.icon} ${km.toFixed(1)} km · ${sourceLabel} · ${profile.description}.`;
     } catch (err) {
       if (serial !== state.planner.requestSerial) return;
-      state.planner.routePoints = state.planner.waypoints.map(p => ({ ...p, ele: null }));
+      // Pas de fausse ligne droite. Si un ancien itinéraire routé existait, on le conserve
+      // visuellement mais il ne peut pas être enregistré tant que le nouveau calcul a échoué.
+      if (hadPreviousRoute) {
+        state.planner.routePoints = previousPoints;
+      } else {
+        state.planner.routePoints = [];
+        if (state.planner.line) {
+          state.map.removeLayer(state.planner.line);
+          state.planner.line = null;
+        }
+      }
       state.planner.routeValid = false;
-      drawPlannerLine(state.planner.routePoints, true);
       const isTimeout = err?.name === 'AbortError' || String(err?.message || '').includes('routing-timeout');
       ui.plannerStatus.textContent = isTimeout
-        ? 'Le routeur ne répond pas. Ligne provisoire affichée — réessaie dans quelques secondes.'
-        : 'Impossible de calculer le chemin. Ligne provisoire affichée — le parcours ne peut pas être enregistré ainsi.';
+        ? 'Le routeur met trop de temps à répondre. Aucun faux tracé n’est affiché — réessaie dans quelques secondes.'
+        : 'Impossible de calculer un vrai itinéraire. Réessaie ou déplace légèrement le dernier point.';
     } finally {
       if (serial === state.planner.requestSerial) {
         state.planner.routing = false;
@@ -3479,7 +3745,7 @@
   }
 
   function registerSW() {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.3', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.6', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
   }
 
   initMap();

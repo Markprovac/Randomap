@@ -33,3 +33,9 @@ Après publication, ouvre au moins une fois la v1.10.0 avec Internet afin que le
 V1.10.1 : calcul D+/D- lissé (profil régulier + filtre médian/moyenne + seuil 8 m), distance conservée sur la géométrie complète.
 
 V1.10.3 : correction altitude null->0, récupération relief forcée si absent, axe du profil basé sur la distance réelle du tracé complet.
+
+V1.10.4 : routage hybride réactif — Rando/Route via routing.openstreetmap.de en priorité, Gravel/VTT via Valhalla, secours croisés, suppression de la ligne droite provisoire.
+
+V1.10.5 : vélo route OSM immédiat + contrôle des surfaces OSM + correction Valhalla Road si nécessaire.
+
+V1.10.6 : contrôle Vélo route strict — OSM immédiat, rejet des surfaces gravel/terre/non revêtues et des chemins non pavés, recalcul Valhalla Road, seconde vérification avant enregistrement.

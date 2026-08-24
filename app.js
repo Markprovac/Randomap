@@ -951,7 +951,6 @@
   function openActivityCard() {
     ui.activityCard.classList.remove('hidden');
     updateActivityUI();
-    ui.activityCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
   function startActivity(routeToFollow = null) {
@@ -1465,6 +1464,39 @@
     toast._t = setTimeout(() => ui.toast.classList.remove('show'), 2600);
   }
 
+  const APP_SCREEN_NAMES = new Set(['map','activity','routes','weather','info']);
+  let currentAppScreen = 'map';
+
+  function showAppScreen(name, options = {}) {
+    if (!APP_SCREEN_NAMES.has(name)) name = 'map';
+    const { scroll = true } = options;
+    currentAppScreen = name;
+
+    document.querySelectorAll('.app-screen[data-screen]').forEach(screen => {
+      const active = screen.dataset.screen === name;
+      screen.classList.toggle('active', active);
+      screen.setAttribute('aria-hidden', active ? 'false' : 'true');
+    });
+    document.querySelectorAll('[data-nav]').forEach(btn => {
+      const active = btn.dataset.nav === name;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-current', active ? 'page' : 'false');
+    });
+
+    if (name === 'activity') openActivityCard();
+    if (scroll) window.scrollTo({ top: 0, behavior: 'auto' });
+
+    // Leaflet a besoin de recalculer sa taille après avoir été masqué.
+    if (name === 'map') {
+      setTimeout(() => {
+        state.map?.invalidateSize();
+        if (state.location && !state.mapFullscreen) {
+          // On ne recentre pas : on conserve la position de carte choisie par l'utilisateur.
+        }
+      }, 60);
+    }
+  }
+
   function bindEvents() {
     document.querySelectorAll('[data-basemap]').forEach(btn => btn.addEventListener('click', () => switchBase(btn.dataset.basemap)));
     ui.radarToggle.addEventListener('click', toggleRadar);
@@ -1503,6 +1535,7 @@
     }));
 
     ui.createRouteBtn.addEventListener('click', startPlanner);
+    document.getElementById('routesCreateBtn')?.addEventListener('click', startPlanner);
     ui.plannerGpsBtn.addEventListener('click', useGpsAsPlannerStart);
     ui.plannerUndoBtn.addEventListener('click', undoPlannerWaypoint);
     ui.plannerClearBtn.addEventListener('click', clearPlanner);
@@ -1518,7 +1551,7 @@
     }));
     ui.savedRoutesList.addEventListener('click', handleSavedRouteAction);
 
-    ui.activityOpenBtn.addEventListener('click', openActivityCard);
+    ui.activityOpenBtn.addEventListener('click', () => { openActivityCard(); showAppScreen('activity'); });
     ui.activityCloseCardBtn.addEventListener('click', () => ui.activityCard.classList.add('hidden'));
     ui.activityStartBtn.addEventListener('click', activityMainButton);
     ui.activityExportBtn.addEventListener('click', exportActivity);
@@ -1539,47 +1572,20 @@
     ui.targetSelectBtn.addEventListener('click', beginTargetSelection);
     ui.targetClearBtn.addEventListener('click', () => clearActivityTarget(true));
 
-    // Navigation mobile v1.4
-    const navButtons = [...document.querySelectorAll('[data-nav]')];
-    const setActiveNav = name => navButtons.forEach(btn => btn.classList.toggle('active', btn.dataset.nav === name));
-    const scrollToElement = element => element?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-
-    navButtons.forEach(btn => btn.addEventListener('click', () => {
-      const dest = btn.dataset.nav;
-      setActiveNav(dest);
-      if (dest === 'map') {
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-        return;
-      }
-      if (dest === 'activity') {
-        openActivityCard();
-        setTimeout(() => scrollToElement(ui.activityCard), 40);
-        return;
-      }
-      if (dest === 'routes') {
-        const target = !ui.savedRoutesCard.classList.contains('hidden') ? ui.savedRoutesCard : (!ui.routeCard.classList.contains('hidden') ? ui.routeCard : document.querySelector('.quick-actions'));
-        scrollToElement(target);
-        return;
-      }
-      if (dest === 'weather') {
-        scrollToElement(document.getElementById('forecastSection'));
-        return;
-      }
-      if (dest === 'info') {
-        scrollToElement(document.getElementById('infoSection'));
-      }
+    // Navigation par écrans v1.6.1 : un seul écran visible à la fois.
+    document.querySelectorAll('[data-nav]').forEach(btn => btn.addEventListener('click', () => {
+      showAppScreen(btn.dataset.nav);
     }));
 
     document.querySelectorAll('[data-nav-action]').forEach(btn => btn.addEventListener('click', () => {
       const action = btn.dataset.navAction;
       if (action === 'activity') {
         openActivityCard();
-        setActiveNav('activity');
-        setTimeout(() => scrollToElement(ui.activityCard), 40);
+        showAppScreen('activity');
       } else if (action === 'routes') {
-        setActiveNav('routes');
-        const target = !ui.savedRoutesCard.classList.contains('hidden') ? ui.savedRoutesCard : (!ui.routeCard.classList.contains('hidden') ? ui.routeCard : document.querySelector('.quick-actions'));
-        scrollToElement(target);
+        showAppScreen('routes');
+      } else if (action === 'weather') {
+        showAppScreen('weather');
       }
     }));
 
@@ -1598,11 +1604,12 @@
   }
 
   function registerSW() {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.5.2', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.6.1', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
   }
 
   initMap();
   bindEvents();
+  showAppScreen('map', { scroll: false });
   renderSavedRoutes();
   updateActivityUI();
   registerSW();

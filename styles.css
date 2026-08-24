@@ -984,3 +984,125 @@ body.activity-choice-open{overflow:hidden}
   .planner-mode-btn span{font-size:15px}
   .planner-mode-btn small{font-size:8px}
 }
+
+/* =========================================================
+   V1.6.1 — Navigation par vrais écrans internes
+   Un seul écran est rendu dans le flux à la fois.
+   ========================================================= */
+.app-screen{
+  display:none;
+  width:100%;
+  max-width:100%;
+  min-width:0;
+}
+.app-screen.active{display:block}
+.app-screen[aria-hidden="true"]{display:none!important}
+
+.screen-heading{
+  padding:18px 16px 4px;
+  max-width:900px;
+  margin:0 auto;
+}
+.screen-heading h2{
+  margin:0;
+  font-size:26px;
+  letter-spacing:-.6px;
+}
+.screen-heading p{
+  margin:5px 0 0;
+  color:var(--muted);
+  font-size:13px;
+  line-height:1.4;
+}
+.screen-content{
+  width:100%;
+  max-width:900px;
+  min-width:0;
+  margin:0 auto;
+  padding:12px 14px 18px;
+  display:grid;
+  gap:12px;
+}
+.map-home-content{padding-top:12px}
+
+/* Les anciennes cartes d'aperçu n'ont plus lieu d'être :
+   chaque rubrique possède désormais son propre écran. */
+.weather-page-summary{
+  padding:16px;
+  background:var(--surface);
+  border:1px solid var(--line);
+  border-radius:22px;
+  box-shadow:var(--shadow-soft);
+}
+
+.route-tools-card{
+  background:var(--surface);
+  border:1px solid var(--line);
+  border-radius:22px;
+  box-shadow:var(--shadow-soft);
+  padding:12px;
+}
+.route-tools-grid{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:9px;
+}
+.route-tool-button{
+  min-width:0;
+  min-height:76px;
+  border:1px solid var(--line);
+  border-radius:17px;
+  background:#f7faf9;
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:10px 12px;
+  text-align:left;
+  cursor:pointer;
+  color:var(--text);
+}
+.route-tool-button:active{transform:scale(.985)}
+.route-tool-icon{
+  flex:0 0 42px;
+  width:42px;
+  height:42px;
+  display:grid;
+  place-items:center;
+  border-radius:13px;
+  background:var(--green-soft);
+  color:var(--green);
+  font-size:12px;
+  font-weight:900;
+}
+.route-tool-button>span:last-child{min-width:0}
+.route-tool-button strong{display:block;font-size:14px;color:var(--text)}
+.route-tool-button small{display:block;margin-top:3px;font-size:10px;color:var(--muted);line-height:1.25}
+.route-tool-create .route-tool-icon{font-size:18px;background:#e8f6f3;color:#0b8c7b}
+
+/* L'écran Activité est une destination en soi : le bouton Fermer de
+   l'ancienne carte n'est plus nécessaire. */
+.app-screen[data-screen="activity"] #activityCloseCardBtn{display:none}
+.app-screen[data-screen="activity"] #activityCard{display:block!important}
+
+/* Navigation fixe : l'état actif correspond maintenant à la page affichée. */
+.bottom-nav-btn[aria-current="page"]{background:var(--green-soft);color:var(--green)}
+
+@media(max-width:900px){
+  .screen-heading{padding:15px 10px 2px}
+  .screen-heading h2{font-size:24px}
+  .screen-heading p{font-size:13px}
+  .screen-content{padding:10px 10px 16px;gap:10px}
+  .map-home-content{padding-top:10px}
+}
+
+@media(max-width:430px){
+  .screen-heading{padding:13px 8px 2px}
+  .screen-heading h2{font-size:22px}
+  .screen-heading p{font-size:12px}
+  .screen-content{padding:8px 8px 14px;gap:8px}
+  .route-tools-card{padding:8px;border-radius:18px}
+  .route-tools-grid{grid-template-columns:1fr;gap:7px}
+  .route-tool-button{min-height:66px;padding:8px 10px}
+  .route-tool-button strong{font-size:13px}
+  .route-tool-button small{font-size:10px}
+}

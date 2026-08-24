@@ -42,4 +42,6 @@ V1.10.11 : contrôle Vélo route strict — OSM immédiat, rejet des surfaces gr
 
 V1.10.11 : retour au comportement de validation Vélo route de la V1.10.6 (contrôle souple, pas de blocage systématique si le revêtement est non vérifiable).
 
-V1.10.12 : panneau de suivi d'activité déplacé en bas de la carte et repliable. Mode compact par défaut avec activité/distance/temps/vitesse ; tap sur le panneau pour agrandir, chevron pour réduire. Le panneau radar est masqué pendant le suivi plein écran afin de ne pas chevaucher le bottom sheet.
+V1.10.13 : panneau de suivi d'activité déplacé en bas de la carte et repliable. Mode compact par défaut avec activité/distance/temps/vitesse ; tap sur le panneau pour agrandir, chevron pour réduire. Le panneau radar est masqué pendant le suivi plein écran afin de ne pas chevaucher le bottom sheet.
+
+V1.10.13 : persistance automatique de l’activité en cours. Un pull-to-refresh/rechargement restaure le chrono, la trace, le type d’activité, le GPX suivi, la progression et la destination, puis relance le GPS.

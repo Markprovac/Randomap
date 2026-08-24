@@ -1,9 +1,12 @@
-/* Rando Radar v1.10.12 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
+/* Rando Radar v1.10.13 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
 (() => {
   'use strict';
 
   const ROUTER_MIN_INTERVAL = 1100;
   const SAVED_ROUTES_KEY = 'randoRadar.savedRoutes.v1';
+  const ACTIVE_ACTIVITY_KEY = 'randoRadar.activeActivity.v1';
+  let lastActivityPersistAt = 0;
+  let activityPersistWarned = false;
   const VALHALLA_ROUTE_URL = 'https://valhalla1.openstreetmap.de/route';
   const OVERPASS_ENDPOINTS = [
     'https://overpass.private.coffee/api/interpreter',
@@ -376,6 +379,7 @@
     if (state.activity.status === 'recording') recordActivityPoint(state.location);
     if (state.activity.followRoute) updateRouteFollowGuide(state.location);
     if (state.activity.target) updateTargetGuide();
+    if (['recording','paused'].includes(state.activity.status)) persistActivitySnapshot();
     scheduleWeather(latitude, longitude);
 
     // Si une activité libre vient de démarrer avant d'obtenir le premier point GPS,
@@ -2551,6 +2555,168 @@
     }
   }
 
+  // ---------- Persistance activité en cours v1.10.13 ----------
+
+  function compactRouteForActivity(route) {
+    if (!route || !Array.isArray(route.points) || route.points.length < 2) return null;
+    const clonePoint = p => ({
+      lat: Number(p.lat), lon: Number(p.lon),
+      ele: hasElevation(p.ele) ? Number(p.ele) : null,
+      time: p.time || null,
+      distanceKm: Number.isFinite(Number(p.distanceKm)) ? Number(p.distanceKm) : undefined
+    });
+    const clean = {
+      name: route.name || 'Parcours',
+      points: route.points.map(clonePoint).filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon)),
+      distanceKm: Number(route.distanceKm) || routeDistance(route.points),
+      gain: Number.isFinite(Number(route.gain)) ? Number(route.gain) : 0,
+      loss: Number.isFinite(Number(route.loss)) ? Number(route.loss) : 0,
+      high: hasElevation(route.high) ? Number(route.high) : null,
+      low: hasElevation(route.low) ? Number(route.low) : null,
+      rawGain: Number.isFinite(Number(route.rawGain)) ? Number(route.rawGain) : null,
+      rawLoss: Number.isFinite(Number(route.rawLoss)) ? Number(route.rawLoss) : null,
+      elevationFiltered: Boolean(route.elevationFiltered),
+      plannerProfile: route.plannerProfile || null,
+      transportMode: route.transportMode || null,
+      source: route.source || null,
+      createdAt: route.createdAt || Date.now()
+    };
+    if (Array.isArray(route.elevationProfile) && route.elevationProfile.length) {
+      clean.elevationProfile = route.elevationProfile.map(clonePoint).filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon));
+    }
+    return clean;
+  }
+
+  function persistActivitySnapshot(force = false) {
+    const a = state.activity;
+    if (!['recording','paused','finished'].includes(a.status)) {
+      try { localStorage.removeItem(ACTIVE_ACTIVITY_KEY); } catch (_) {}
+      return;
+    }
+    const now = Date.now();
+    if (!force && now - lastActivityPersistAt < 2500) return;
+    lastActivityPersistAt = now;
+    const snapshot = {
+      version: 1,
+      savedAt: now,
+      status: a.status,
+      mode: a.mode,
+      startedAt: a.startedAt,
+      pausedAt: a.pausedAt,
+      pausedMs: a.pausedMs || 0,
+      finishedAt: a.finishedAt,
+      points: (a.points || []).map(p => ({
+        lat: Number(p.lat), lon: Number(p.lon),
+        ele: hasElevation(p.ele) ? Number(p.ele) : null,
+        time: p.time || null,
+        timestamp: Number(p.timestamp) || null,
+        accuracy: Number.isFinite(Number(p.accuracy)) ? Number(p.accuracy) : null
+      })).filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon)),
+      distanceKm: Number(a.distanceKm) || 0,
+      currentSpeed: Number(a.currentSpeed) || 0,
+      name: a.name || '',
+      target: a.target && Number.isFinite(Number(a.target.lat)) && Number.isFinite(Number(a.target.lon))
+        ? { lat:Number(a.target.lat), lon:Number(a.target.lon) } : null,
+      followRoute: compactRouteForActivity(a.followRoute),
+      followRouteLastIndex: Number.isInteger(a.followRouteLastIndex) ? a.followRouteLastIndex : null,
+      mapFullscreen: Boolean(state.mapFullscreen)
+    };
+    try {
+      localStorage.setItem(ACTIVE_ACTIVITY_KEY, JSON.stringify(snapshot));
+      activityPersistWarned = false;
+    } catch (err) {
+      if (!activityPersistWarned) {
+        activityPersistWarned = true;
+        toast('Impossible de sauvegarder automatiquement l’activité sur le téléphone.');
+      }
+    }
+  }
+
+  function clearPersistedActivity() {
+    try { localStorage.removeItem(ACTIVE_ACTIVITY_KEY); } catch (_) {}
+    lastActivityPersistAt = 0;
+  }
+
+  function restoreActivitySnapshot() {
+    let snap;
+    try { snap = JSON.parse(localStorage.getItem(ACTIVE_ACTIVITY_KEY) || 'null'); }
+    catch (_) { clearPersistedActivity(); return false; }
+    if (!snap || !['recording','paused','finished'].includes(snap.status)) return false;
+
+    // Évite de ressusciter une activité oubliée depuis plusieurs jours.
+    if (!snap.savedAt || Date.now() - Number(snap.savedAt) > 48 * 3600 * 1000) {
+      clearPersistedActivity();
+      return false;
+    }
+
+    const pts = Array.isArray(snap.points) ? snap.points.map(p => ({
+      lat:Number(p.lat), lon:Number(p.lon),
+      ele:hasElevation(p.ele) ? Number(p.ele) : null,
+      time:p.time || null,
+      timestamp:Number(p.timestamp) || Date.now(),
+      accuracy:Number.isFinite(Number(p.accuracy)) ? Number(p.accuracy) : null
+    })).filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon)) : [];
+
+    const mode = ACTIVITY_PROFILES[snap.mode] ? snap.mode : 'hike';
+    const followRoute = snap.followRoute && Array.isArray(snap.followRoute.points) && snap.followRoute.points.length > 1
+      ? snap.followRoute : null;
+
+    clearActivityTrack();
+    clearActivityTarget();
+    state.activity.status = snap.status;
+    state.activity.mode = mode;
+    state.activity.startedAt = Number(snap.startedAt) || Date.now();
+    state.activity.pausedAt = snap.status === 'paused' ? (Number(snap.pausedAt) || Date.now()) : null;
+    state.activity.pausedMs = Number(snap.pausedMs) || 0;
+    state.activity.finishedAt = Number(snap.finishedAt) || null;
+    state.activity.points = pts;
+    state.activity.distanceKm = Number(snap.distanceKm) || (pts.length > 1 ? routeDistance(pts) : 0);
+    state.activity.currentSpeed = snap.status === 'recording' ? (Number(snap.currentSpeed) || 0) : 0;
+    state.activity.name = snap.name || `${getActivityProfile(mode).label} restaurée`;
+    state.activity.followRoute = followRoute;
+    state.activity.followRouteCumKm = followRoute ? buildCumulativeRouteKm(followRoute.points) : null;
+    state.activity.followRouteLastIndex = Number.isInteger(snap.followRouteLastIndex) ? snap.followRouteLastIndex : null;
+    state.activity.offRouteAlerted = false;
+    state.activity.line = L.polyline(pts.map(p => [p.lat,p.lon]), { color:'#fb7185', weight:5, opacity:.96 }).addTo(state.map);
+
+    if (followRoute) {
+      state.route = followRoute;
+      drawRoute(false);
+      renderRouteStats();
+    }
+
+    if (snap.target && Number.isFinite(Number(snap.target.lat)) && Number.isFinite(Number(snap.target.lon))) {
+      const point = { lat:Number(snap.target.lat), lon:Number(snap.target.lon) };
+      state.activity.target = point;
+      const icon = L.divIcon({ className:'', html:'<div class="target-marker">🎯</div>', iconSize:[34,34], iconAnchor:[17,17] });
+      state.activity.targetMarker = L.marker([point.lat, point.lon], { icon, zIndexOffset:900 }).addTo(state.map);
+      state.activity.targetLine = L.polyline([], { color:'#fbbf24', weight:3, opacity:.9, dashArray:'7 8' }).addTo(state.map);
+      ui.targetGuide.classList.remove('hidden');
+    }
+
+    clearInterval(state.activity.timer);
+    state.activity.timer = setInterval(updateActivityUI, 1000);
+    updateActivityUI();
+    syncActivityMapPanel();
+
+    if (snap.status === 'recording' || snap.status === 'paused') {
+      startLocation(false);
+      setAlert('safe', '↻', 'Activité restaurée', `${getActivityProfile(mode).label} reprise après le rechargement de la page.`);
+      toast(snap.status === 'paused' ? 'Activité restaurée en pause.' : 'Activité restaurée · GPS repris.');
+      if (snap.mapFullscreen) {
+        setTimeout(() => {
+          showAppScreen('map', { scroll:false });
+          enterMapFullscreen();
+          syncActivityMapPanel();
+        }, 120);
+      }
+    }
+    // Réécrit immédiatement l'état restauré : même un second rechargement
+    // juste après le premier ne peut pas perdre l'activité.
+    persistActivitySnapshot(true);
+    return true;
+  }
+
   // ---------- Activité GPS en direct ----------
 
   function openActivityCard() {
@@ -2580,6 +2746,7 @@
       ? `${routeToFollow.name} · ${activityProfile.label} · ${new Date().toLocaleString('fr-FR', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})}`
       : `${activityProfile.label} ${new Date().toLocaleString('fr-FR', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})}`;
     state.activity.line = L.polyline([], { color:'#fb7185', weight:5, opacity:.96 }).addTo(state.map);
+    persistActivitySnapshot(true);
     startLocation(false);
     if (state.location) recordActivityPoint(state.location, true);
     clearInterval(state.activity.timer);
@@ -2639,6 +2806,7 @@
     state.activity.points.push(p);
     state.activity.line.setLatLngs(state.activity.points.map(x => [x.lat, x.lon]));
     updateActivityUI();
+    persistActivitySnapshot();
   }
 
   function toggleActivityPause() {
@@ -2655,6 +2823,7 @@
       toast('Enregistrement repris.');
     }
     updateActivityUI();
+    persistActivitySnapshot(true);
   }
 
   function finishActivity() {
@@ -2699,6 +2868,7 @@
       syncActivityMapPanel();
       setAlert('safe', '🏁', 'Activité terminée', `${state.activity.distanceKm.toFixed(2)} km conservés. Tu peux exporter la trace en GPX.`);
       toast('Activité enregistrée. Trace prête à exporter.');
+      persistActivitySnapshot(true);
       return;
     }
 
@@ -2724,6 +2894,7 @@
     hideRouteFollowGuide();
     setAlert('neutral', '🧭', 'Activité terminée', 'La trace n’a pas été enregistrée.');
     toast('Activité terminée sans enregistrer la trace.');
+    clearPersistedActivity();
   }
 
   function clearActivityTrack() {
@@ -2930,6 +3101,7 @@
     ui.targetGuide.classList.remove('hidden');
     updateTargetGuide();
     toast('Destination définie. Guidage activé.');
+    persistActivitySnapshot(true);
   }
 
   function clearActivityTarget(clearPoint = true) {
@@ -2942,6 +3114,7 @@
     state.activity.targetSelect = false;
     ui.targetSelectBtn.classList.remove('selecting');
     ui.targetSelectBtn.textContent = '🎯 Destination';
+    if (clearPoint) persistActivitySnapshot(true);
   }
 
   function updateTargetGuide() {
@@ -3883,18 +4056,28 @@
       state.deferredInstall = null;
       ui.installBtn.classList.add('hidden');
     });
+
+    // Pull-to-refresh, fermeture d'onglet ou mise en arrière-plan : sauvegarde synchrone
+    // de la dernière activité afin qu'un rechargement ne l'efface jamais.
+    window.addEventListener('pagehide', () => persistActivitySnapshot(true));
+    window.addEventListener('beforeunload', () => persistActivitySnapshot(true));
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') persistActivitySnapshot(true);
+    });
   }
 
   function registerSW() {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.12', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.13', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
   }
 
   initMap();
   bindEvents();
   bindOfflineEvents();
+  const activityRestored = restoreActivitySnapshot();
   showAppScreen('map', { scroll: false });
   renderSavedRoutes();
   updateActivityUI();
+  if (activityRestored) syncActivityMapPanel();
   registerSW();
   if (navigator.onLine) loadRadar(); else setTimeout(handleOfflineNetworkLoss, 250);
   setTimeout(() => startLocation(true), 400);

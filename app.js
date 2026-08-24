@@ -76,7 +76,8 @@
     activityOpenBtn: $('activityOpenBtn'), activityCard: $('activityCard'), activityTitle: $('activityTitle'), activityCloseCardBtn: $('activityCloseCardBtn'), activityStartBtn: $('activityStartBtn'), activityExportBtn: $('activityExportBtn'), activityStats: $('activityStats'), activityDistance: $('activityDistance'), activityTime: $('activityTime'), activitySpeed: $('activitySpeed'), activityAvgSpeed: $('activityAvgSpeed'), activityHelp: $('activityHelp'),
     activityMapPanel: $('activityMapPanel'), activityMapTitle: $('activityMapTitle'), activityMapStatus: $('activityMapStatus'), activityMapDistance: $('activityMapDistance'), activityMapTime: $('activityMapTime'), activityMapSpeed: $('activityMapSpeed'), activityPauseBtn: $('activityPauseBtn'), activityStopBtn: $('activityStopBtn'),
     targetSelectBtn: $('targetSelectBtn'), targetGuide: $('targetGuide'), targetArrow: $('targetArrow'), targetDistance: $('targetDistance'), targetBearing: $('targetBearing'), targetEta: $('targetEta'), targetClearBtn: $('targetClearBtn'),
-    routeFollowGuide: $('routeFollowGuide'), routeFollowName: $('routeFollowName'), routeFollowRemaining: $('routeFollowRemaining'), routeFollowProgress: $('routeFollowProgress'), routeFollowDeviation: $('routeFollowDeviation')
+    routeFollowGuide: $('routeFollowGuide'), routeFollowName: $('routeFollowName'), routeFollowRemaining: $('routeFollowRemaining'), routeFollowProgress: $('routeFollowProgress'), routeFollowDeviation: $('routeFollowDeviation'),
+    finishActivityModal: $('finishActivityModal'), finishSaveBtn: $('finishSaveBtn'), finishDiscardBtn: $('finishDiscardBtn'), finishCancelBtn: $('finishCancelBtn')
   };
 
   function initMap() {
@@ -961,22 +962,71 @@
 
   function finishActivity() {
     if (!['recording','paused'].includes(state.activity.status)) return;
-    if (!window.confirm('Terminer et enregistrer cette activité ?')) return;
+    openFinishActivityModal();
+  }
+
+  function openFinishActivityModal() {
+    if (!ui.finishActivityModal) return;
+    ui.finishActivityModal.classList.remove('hidden');
+    document.body.classList.add('activity-choice-open');
+    setTimeout(() => ui.finishSaveBtn?.focus(), 30);
+  }
+
+  function closeFinishActivityModal() {
+    if (!ui.finishActivityModal) return;
+    ui.finishActivityModal.classList.add('hidden');
+    document.body.classList.remove('activity-choice-open');
+  }
+
+  function finalizeActivity(keepTrack) {
+    if (!['recording','paused'].includes(state.activity.status)) {
+      closeFinishActivityModal();
+      return;
+    }
+
     if (state.activity.status === 'paused' && state.activity.pausedAt) {
       state.activity.pausedMs += Date.now() - state.activity.pausedAt;
       state.activity.pausedAt = null;
     }
-    state.activity.finishedAt = Date.now();
-    state.activity.status = 'finished';
-    state.activity.currentSpeed = 0;
+
     clearInterval(state.activity.timer);
     state.activity.timer = null;
     state.activity.targetSelect = false;
+    state.activity.currentSpeed = 0;
+    closeFinishActivityModal();
+
+    if (keepTrack) {
+      state.activity.finishedAt = Date.now();
+      state.activity.status = 'finished';
+      updateActivityUI();
+      syncActivityMapPanel();
+      setAlert('safe', '🏁', 'Activité terminée', `${state.activity.distanceKm.toFixed(2)} km conservés. Tu peux exporter la trace en GPX.`);
+      toast('Activité enregistrée. Trace prête à exporter.');
+      return;
+    }
+
+    clearActivityTarget();
+    clearActivityTrack();
+    const previousMode = state.activity.mode;
+    state.activity.status = 'idle';
+    state.activity.startedAt = null;
+    state.activity.pausedAt = null;
+    state.activity.pausedMs = 0;
+    state.activity.finishedAt = null;
+    state.activity.points = [];
+    state.activity.distanceKm = 0;
+    state.activity.currentSpeed = 0;
+    state.activity.name = '';
+    state.activity.followRoute = null;
+    state.activity.followRouteCumKm = null;
+    state.activity.followRouteLastIndex = null;
+    state.activity.offRouteAlerted = false;
+    state.activity.mode = previousMode;
     updateActivityUI();
     syncActivityMapPanel();
-    openActivityCard();
-    setAlert('safe', '🏁', 'Activité terminée', `${state.activity.distanceKm.toFixed(2)} km enregistrés. Tu peux exporter la trace en GPX.`);
-    toast('Activité terminée. Trace prête à exporter.');
+    hideRouteFollowGuide();
+    setAlert('neutral', '🧭', 'Activité terminée', 'La trace n’a pas été enregistrée.');
+    toast('Activité terminée sans enregistrer la trace.');
   }
 
   function clearActivityTrack() {
@@ -1395,6 +1445,10 @@
     }));
     ui.activityPauseBtn.addEventListener('click', toggleActivityPause);
     ui.activityStopBtn.addEventListener('click', finishActivity);
+    ui.finishSaveBtn?.addEventListener('click', () => finalizeActivity(true));
+    ui.finishDiscardBtn?.addEventListener('click', () => finalizeActivity(false));
+    ui.finishCancelBtn?.addEventListener('click', closeFinishActivityModal);
+    ui.finishActivityModal?.querySelector('[data-finish-action="cancel"]')?.addEventListener('click', closeFinishActivityModal);
     ui.targetSelectBtn.addEventListener('click', beginTargetSelection);
     ui.targetClearBtn.addEventListener('click', () => clearActivityTarget(true));
 

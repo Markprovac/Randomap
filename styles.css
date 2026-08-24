@@ -921,3 +921,25 @@ html, body {
   .route-follow-guide>div{border-left:0;border-top:1px solid rgba(36,104,232,.10)}
   .route-follow-guide>div:first-child{border-top:0}
 }
+
+/* =========================================================
+   V1.5.1 — Choix de fin d’activité
+   ========================================================= */
+body.activity-choice-open{overflow:hidden}
+.app-modal{position:fixed;inset:0;z-index:12000;display:grid;align-items:end;justify-items:stretch}
+.app-modal.hidden{display:none!important}
+.app-modal-backdrop{position:absolute;inset:0;background:rgba(10,18,30,.52);backdrop-filter:blur(2px)}
+.app-modal-sheet{position:relative;z-index:1;width:min(100% - 20px,520px);margin:0 auto calc(10px + env(safe-area-inset-bottom));padding:20px;border-radius:26px;background:#fff;box-shadow:0 24px 70px rgba(10,18,30,.32);text-align:center}
+.app-modal-icon{width:56px;height:56px;margin:0 auto 8px;border-radius:18px;display:grid;place-items:center;background:#edf6f2;font-size:28px}
+.app-modal-sheet h2{margin:4px 0 7px;font-size:22px;letter-spacing:-.4px}
+.app-modal-sheet p{margin:0 0 17px;color:var(--muted);font-size:14px;line-height:1.4}
+.app-modal-actions{display:grid;gap:9px}
+.app-modal-actions button{width:100%;min-height:52px;border-radius:16px;font-weight:850;font-size:14px;padding:10px 14px}
+.modal-primary{border:1px solid #0f8a67;background:#0f8a67;color:#fff}
+.modal-danger{border:1px solid #f0c8d0;background:#fff2f5;color:#b83955}
+.modal-secondary{border:1px solid var(--line);background:#f3f6f5;color:#334356}
+@media(max-width:430px){
+  .app-modal-sheet{width:calc(100% - 16px);margin-bottom:calc(8px + env(safe-area-inset-bottom));padding:17px;border-radius:23px}
+  .app-modal-sheet h2{font-size:20px}
+  .app-modal-actions button{min-height:50px;font-size:13px}
+}

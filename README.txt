@@ -1,4 +1,4 @@
-Rando Radar v1.9.1
+Rando Radar v1.10.0
 
 Fichiers à publier ensemble :
 - index.html
@@ -9,19 +9,23 @@ Fichiers à publier ensemble :
 - icon-192.png
 - icon-512.png
 
-Nouveau v1.9.0 : CARTES HORS LIGNE
-- Préparer une carte autour du parcours chargé ou de la position GPS.
-- Choix d'une marge de 1, 3 ou 5 km.
-- Téléchargement avant départ des routes, pistes, sentiers, cours d'eau et points utiles OpenStreetMap.
-- Stockage local dans IndexedDB.
-- Le parcours chargé et la dernière météo disponible sont inclus dans le paquet hors ligne.
-- Bascule automatique sur une carte vectorielle locale lorsque le réseau disparaît.
-- GPS, trace d'activité, suivi GPX, distance et navigation point restent utilisables sans réseau.
-- Radar et nouvelles prévisions météo nécessitent toujours Internet.
-- Leaflet est mis en cache par le service worker afin que l'application puisse démarrer hors connexion après une première installation/mise à jour en ligne.
+Nouveau v1.10.0 — FICHES PARCOURS + PROFIL ALTIMÉTRIQUE
+- Un clic sur un parcours de la liste ouvre sa fiche détaillée.
+- Un clic directement sur un tracé de la carte ouvre la même fiche en superposition sur la carte.
+- Informations : type d'activité, distance, temps estimé, D+, D-, altitude min/max, difficulté et terrain estimé.
+- Profil altimétrique interactif : glisser sur la courbe affiche la distance et l'altitude correspondantes.
+- Sur la carte, le curseur altimétrique déplace également un repère sur le point correspondant du parcours.
+- Le parcours chargé dispose lui aussi d'un profil altimétrique.
+- Pendant le suivi d'un GPX, la progression actuelle est reportée sur la courbe altimétrique.
+- Les altitudes manquantes sont complétées via Open-Meteo lorsque le réseau est disponible.
+- Les estimations de difficulté et de durée tiennent compte du profil Rando / Route / Gravel / VTT, du dénivelé et, lorsque disponible, du terrain OpenStreetMap.
+
+Hors ligne (depuis v1.9.x) :
+- Préparation manuelle autour d'un parcours ou de la position GPS.
+- Préparation automatique au démarrage d'un parcours (3 km de marge) ou d'une activité libre (5 km autour du départ).
+- Carte vectorielle locale OpenStreetMap stockée dans IndexedDB.
+- Le GPS, la trace d'activité, le suivi GPX, la distance et la navigation vers un point restent utilisables sans réseau.
+- Le radar et les nouvelles prévisions météo nécessitent toujours Internet.
 
 Important :
-Ouvre au moins une fois la v1.9.0 avec Internet après publication afin que le nouveau service worker mette en cache les fichiers nécessaires à l'utilisation hors ligne.
-
-
-Nouveau v1.9.1 : préparation hors ligne automatique au démarrage d’un parcours (3 km de marge) ou d’une activité libre (5 km autour du départ). Le suivi démarre immédiatement pendant le téléchargement en arrière-plan.
+Après publication, ouvre au moins une fois la v1.10.0 avec Internet afin que le service worker mette à jour les fichiers de l'application.

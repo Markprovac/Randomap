@@ -12,7 +12,7 @@
 <link href="icon-192.png" rel="apple-touch-icon"/>
 <link crossorigin="" href="https://unpkg.com" rel="preconnect"/>
 <link crossorigin="" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" rel="stylesheet"/>
-<link href="styles.css?v=1.9.1" rel="stylesheet"/>
+<link href="styles.css?v=1.10.0" rel="stylesheet"/>
 </head>
 <body>
 <div id="app">
@@ -106,6 +106,15 @@
 </div>
 <div class="hike-finder-note">Les tracés trouvés sont affichés directement sur la carte et dans la liste. Route filtre fortement les chemins non revêtus ; Gravel accepte les pistes roulantes ; VTT privilégie les parcours tout-terrain.</div>
 <div class="hike-finder-map-results" id="hikeFinderMapResults"></div>
+</div>
+<div class="finder-map-detail hidden" id="finderMapDetail">
+<div class="finder-detail-head"><div><span class="finder-detail-kicker" id="finderMapDetailType">Parcours</span><strong id="finderMapDetailName">—</strong></div><button id="finderMapDetailClose" type="button" aria-label="Fermer les détails">✕</button></div>
+<div id="finderMapDetailBody" class="finder-detail-body"><div class="finder-detail-loading">Sélectionne un tracé pour afficher ses informations.</div></div>
+<div class="finder-detail-actions">
+<button type="button" data-finder-detail-action="save">💾 Enregistrer</button>
+<button type="button" data-finder-detail-action="load">Charger</button>
+<button type="button" class="finder-detail-start" data-finder-detail-action="start">▶ Démarrer</button>
+</div>
 </div>
 <div class="planner-panel hidden" id="plannerPanel">
 <div class="planner-head">
@@ -218,6 +227,18 @@
 <button class="text-btn" id="hikeFinderNewSearchBtn" type="button">Nouvelle recherche</button>
 </div>
 <div class="hike-results-list" id="hikeFinderResultsList"></div>
+</section><section class="route-card finder-detail-card hidden" id="finderDetailCard">
+<div class="section-head">
+<div><div class="label" id="finderDetailType">Parcours sélectionné</div><h2 id="finderDetailName">—</h2></div>
+<button class="text-btn" id="finderDetailClose" type="button">Fermer</button>
+</div>
+<div id="finderDetailBody"><div class="finder-detail-loading">Sélectionne un parcours dans la liste.</div></div>
+<div class="finder-detail-card-actions">
+<button type="button" data-finder-detail-action="show">🗺️ Carte</button>
+<button type="button" data-finder-detail-action="save">💾 Enregistrer</button>
+<button type="button" data-finder-detail-action="load">Charger</button>
+<button type="button" class="finder-detail-start" data-finder-detail-action="start">▶ Démarrer</button>
+</div>
 </section><section class="route-card hidden" data-section="routes" id="routeCard">
 <div class="section-head">
 <div>
@@ -234,6 +255,16 @@
 <div><span class="label">D+</span><strong id="routeGain">-- m</strong></div>
 <div><span class="label">D-</span><strong id="routeLoss">-- m</strong></div>
 <div><span class="label">Point haut</span><strong id="routeHigh">-- m</strong></div>
+</div>
+<div class="route-detail-summary" id="routeDetailSummary">
+<div class="route-detail-mini"><span>Durée estimée</span><strong id="routeDuration">—</strong></div>
+<div class="route-detail-mini"><span>Difficulté</span><strong id="routeDifficulty">—</strong></div>
+<div class="route-detail-mini"><span>Point bas</span><strong id="routeLow">—</strong></div>
+<div class="route-detail-mini"><span>Terrain</span><strong id="routeSurface">—</strong></div>
+</div>
+<div class="route-elevation-section hidden" id="routeElevationSection">
+<div class="elevation-section-head"><div><span class="label">Profil altimétrique</span><strong>Altitude du parcours</strong></div><span id="routeElevationHint">Glisse sur la courbe</span></div>
+<div id="routeElevationChart"></div>
 </div>
 <div class="mode-row">
 <span class="label">Type de sortie</span>
@@ -302,7 +333,7 @@
 <strong>À propos des données</strong>
 <p>Météo et altitude : Open‑Meteo / modèles Météo‑France AROME &amp; ARPEGE / Copernicus DEM. Radar : RainViewer. Cartographie : OpenTopoMap et OpenStreetMap. Routage : OpenStreetMap/FOSSGIS OSRM et Valhalla selon le profil. Parcours autour : itinéraires OpenStreetMap via Overpass API, filtrés selon le profil choisi. Cartes hors ligne : routes, sentiers et points utiles OpenStreetMap stockés localement dans le téléphone.</p>
 <p class="tiny">Le radar affiche des observations passées, pas une prévision radar future. En montagne, vérifie aussi les vigilances et les conditions réelles avant de partir.</p>
-<p class="tiny app-version">Version chargée : <strong>1.9.1</strong></p>
+<p class="tiny app-version">Version chargée : <strong>1.10.0</strong></p>
 </section></div></section></main>
 <nav aria-label="Navigation principale" class="bottom-nav">
 <button class="bottom-nav-btn active" data-nav="map" type="button"><span>🗺️</span><small>Carte</small></button>
@@ -327,6 +358,6 @@
 </div>
 </div>
 <script crossorigin="" src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="app.js?v=1.9.1"></script>
+<script src="app.js?v=1.10.0"></script>
 </body>
 </html>

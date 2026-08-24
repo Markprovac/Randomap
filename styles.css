@@ -1106,3 +1106,51 @@ body.activity-choice-open{overflow:hidden}
   .route-tool-button strong{font-size:13px}
   .route-tool-button small{font-size:10px}
 }
+
+
+/* =========================================================
+   V1.7.0 — Randonnées autour d’un point
+   ========================================================= */
+.route-tools-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+.route-tool-find .route-tool-icon{font-size:20px;background:#eef6ea;color:#4d7f2e}
+
+.hike-finder-panel{
+  position:absolute;left:10px;right:10px;bottom:calc(10px + env(safe-area-inset-bottom));z-index:890;
+  background:rgba(255,255,255,.97);backdrop-filter:blur(18px);border:1px solid rgba(255,255,255,.96);
+  border-radius:20px;padding:12px;box-shadow:0 12px 30px rgba(20,32,51,.20)
+}
+.hike-finder-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.hike-finder-head strong,.hike-finder-head small{display:block}
+.hike-finder-head strong{font-size:15px}
+.hike-finder-head small{margin-top:3px;color:var(--muted);font-size:10px;line-height:1.35}
+.hike-finder-close{flex:0 0 40px;width:40px;height:40px;border:1px solid var(--line);border-radius:12px;background:#f4f7f6;font-size:18px}
+.hike-finder-radius{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:10px}
+.hike-radius-btn{min-height:40px;border:1px solid var(--line);border-radius:11px;background:#f2f6f4;color:#536273;font-size:11px;font-weight:850}
+.hike-radius-btn.active{background:var(--green);border-color:var(--green);color:#fff}
+.hike-finder-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:8px}
+.hike-finder-actions button{min-height:43px;border:1px solid var(--line);border-radius:12px;background:#eef4f1;color:#185e50;font-size:11px;font-weight:850}
+.hike-finder-note{margin-top:7px;color:#778597;font-size:9px;line-height:1.35}
+.hike-search-center{width:30px;height:30px;display:grid;place-items:center;border-radius:50%;background:#fff;border:3px solid var(--green);box-shadow:0 5px 14px rgba(20,32,51,.25);font-size:15px}
+
+.hike-results-summary{margin-top:4px;color:var(--muted);font-size:11px;line-height:1.35}
+.hike-results-list{display:grid;gap:8px}
+.hike-result-item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;background:#f5f8f7;border:1px solid #e8eeeb;border-radius:15px;padding:11px;min-width:0}
+.hike-result-main{min-width:0}
+.hike-result-name{font-size:14px;font-weight:850;line-height:1.25;overflow-wrap:anywhere}
+.hike-result-meta{margin-top:4px;color:var(--muted);font-size:10px;line-height:1.35}
+.hike-result-actions{display:flex;gap:5px;align-items:center}
+.hike-result-actions button{height:40px;border:1px solid var(--line);border-radius:11px;background:#fff;padding:0 10px;font-size:11px;font-weight:850;white-space:nowrap}
+.hike-result-actions .hike-load{background:var(--green);border-color:var(--green);color:#fff}
+
+@media(max-width:900px){
+  .route-tools-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:430px){
+  .route-tools-grid{grid-template-columns:1fr}
+  .hike-finder-panel{left:8px;right:8px;padding:10px}
+  .hike-finder-radius{gap:5px}
+  .hike-radius-btn{font-size:10px;padding:0 4px}
+  .hike-result-item{grid-template-columns:1fr}
+  .hike-result-actions{justify-content:stretch}
+  .hike-result-actions button{flex:1}
+}

@@ -1,4 +1,4 @@
-/* Rando Radar v1.9.0 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
+/* Rando Radar v1.9.1 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
 (() => {
   'use strict';
 
@@ -146,7 +146,8 @@
     forced: false,
     attributionAdded: false,
     preparing: false,
-    lastAutoCheck: 0
+    lastAutoCheck: 0,
+    pendingActivityPrepare: false
   };
 
   const offlineUI = {
@@ -366,6 +367,13 @@
     if (state.activity.followRoute) updateRouteFollowGuide(state.location);
     if (state.activity.target) updateTargetGuide();
     scheduleWeather(latitude, longitude);
+
+    // Si une activité libre vient de démarrer avant d'obtenir le premier point GPS,
+    // prépare automatiquement la zone hors ligne dès que la position devient disponible.
+    if (state.offline.pendingActivityPrepare && navigator.onLine && !state.offline.preparing) {
+      state.offline.pendingActivityPrepare = false;
+      autoPrepareOfflineForActivity(null).catch(() => {});
+    }
 
     // Hors ligne : si l'utilisateur sort de la zone active, cherche silencieusement
     // une autre carte locale couvrant la nouvelle position (au maximum toutes les 20 s).
@@ -1674,6 +1682,15 @@
       setAlert('safe', '▶️', 'Activité en cours', 'La trace GPS est enregistrée. La carte reste libre : ◎ te recentre sur ta position.');
       toast('Enregistrement GPS démarré.');
     }
+
+    // Prépare automatiquement une carte de secours sans retarder le démarrage.
+    // Le GPX entier est couvert lorsqu'un parcours est suivi ; sinon on utilise
+    // une zone de 5 km autour du point de départ dès que le GPS est disponible.
+    if (navigator.onLine) {
+      if (routeToFollow) autoPrepareOfflineForActivity(routeToFollow).catch(() => {});
+      else if (state.location) autoPrepareOfflineForActivity(null).catch(() => {});
+      else state.offline.pendingActivityPrepare = true;
+    }
   }
 
   function recordActivityPoint(loc, force = false) {
@@ -2189,7 +2206,7 @@
   }
 
 
-  // ---------- Cartes hors ligne v1.9.0 ----------
+  // ---------- Cartes hors ligne v1.9.1 ----------
   const OFFLINE_DB_NAME = 'randoRadar.offline.v1';
   const OFFLINE_STORE = 'areas';
 
@@ -2535,49 +2552,65 @@
     return `${roads} routes · ${trails} sentiers/pistes · ${water} éléments d’eau · ${pois} points utiles`;
   }
 
-  async function prepareOfflineArea() {
-    if (state.offline.preparing) return;
-    if (!navigator.onLine) { toast('Connecte-toi pour préparer une nouvelle carte hors ligne.'); return; }
-    const source = offlineUI.sourceSelect?.value || 'route';
-    const bufferKm = Math.max(1, Math.min(5, Number(offlineUI.bufferSelect?.value || 3)));
-    let route = null, samples = [], name = '';
+  async function existingOfflinePackageFor(route, loc) {
+    try {
+      const list = await offlineDbGetAll();
+      if (route?.points?.length) {
+        // Une carte est considérée comme suffisante si elle couvre tout le tracé.
+        return list.find(pkg => pkg.bbox && route.points.every(p => bboxContains(pkg.bbox, p))) || null;
+      }
+      if (loc) return list.find(pkg => bboxContains(pkg.bbox, loc)) || null;
+    } catch (_) {}
+    return null;
+  }
 
-    if (source === 'route') {
-      if (!state.route?.points?.length) { toast('Charge d’abord un GPX ou un parcours.'); return; }
-      route = JSON.parse(JSON.stringify(state.route));
+  async function createOfflinePackage({ route = null, loc = null, bufferKm = 3, automatic = false } = {}) {
+    if (state.offline.preparing) return null;
+    if (!navigator.onLine) return null;
+
+    bufferKm = Math.max(1, Math.min(5, Number(bufferKm || 3)));
+    let samples = [], name = '', source = route ? 'route' : 'position';
+
+    if (route?.points?.length) {
+      route = JSON.parse(JSON.stringify(route));
       samples = routeSamplesForOffline(route.points, bufferKm);
       name = `🗺️ ${route.name}`;
     } else {
-      let loc = state.location;
-      if (!loc && 'geolocation' in navigator) {
-        try {
-          const pos = await new Promise((resolve,reject) => navigator.geolocation.getCurrentPosition(resolve,reject,{enableHighAccuracy:true,maximumAge:3000,timeout:12000}));
-          loc = { lat:pos.coords.latitude, lon:pos.coords.longitude };
-        } catch (_) {}
-      }
-      if (!loc) { toast('Position GPS indisponible.'); return; }
-      samples = [{lat:loc.lat,lon:loc.lon}];
+      loc = loc || state.location;
+      if (!loc) return null;
+      samples = [{ lat:Number(loc.lat), lon:Number(loc.lon) }];
       name = `📍 Zone ${Number(loc.lat).toFixed(3)}, ${Number(loc.lon).toFixed(3)}`;
     }
 
+    const existing = await existingOfflinePackageFor(route, loc);
+    if (existing) {
+      if (automatic) toast('✓ Carte hors ligne déjà disponible pour cette sortie.');
+      return existing;
+    }
+
     state.offline.preparing = true;
-    offlineUI.prepareBtn.disabled = true;
-    setOfflineProgress(true, 'Préparation de la carte…', 'Téléchargement des routes, pistes, sentiers et points utiles OpenStreetMap.');
+    if (offlineUI.prepareBtn) offlineUI.prepareBtn.disabled = true;
+    setOfflineProgress(true,
+      automatic ? 'Sécurisation hors ligne…' : 'Préparation de la carte…',
+      automatic ? 'L’activité continue pendant le téléchargement de la carte de secours.' : 'Téléchargement des routes, pistes, sentiers et points utiles OpenStreetMap.'
+    );
+    if (automatic) toast('⬇️ Préparation de la carte hors ligne en arrière-plan…');
+
     try {
       if (navigator.storage?.persist) { try { await navigator.storage.persist(); } catch (_) {} }
-      const data = await fetchOfflineElementsSegmented(samples, Math.round(bufferKm*1000));
+      const data = await fetchOfflineElementsSegmented(samples, Math.round(bufferKm * 1000));
       setOfflineProgress(true, 'Optimisation…', 'Réduction des données pour économiser l’espace du téléphone.');
       const features = compactOfflineElements(data);
       if (!features.length) throw new Error('Aucune donnée cartographique trouvée dans cette zone.');
       const bbox = offlineBoundsFromData(features, route);
       const now = Date.now();
-      const center = samples[Math.floor(samples.length/2)];
-      // Actualise une dernière météo avant stockage si possible.
+      const center = samples[Math.floor(samples.length / 2)];
       if (center && navigator.onLine) await loadWeather(center.lat, center.lon, { silent:true });
       const pkg = {
         id:`offline-${now}-${Math.random().toString(36).slice(2,7)}`,
         name, createdAt:now, bufferKm, source, bbox, center,
         features, route,
+        automatic: !!automatic,
         weather: state.lastWeather ? JSON.parse(JSON.stringify(state.lastWeather)) : null,
         weatherSavedAt: state.lastWeather ? Date.now() : null,
         summary: offlineFeatureSummary(features)
@@ -2586,14 +2619,55 @@
       await offlineDbPut(pkg);
       await renderOfflineAreas();
       setOfflineProgress(false);
-      toast(`Carte hors ligne prête · ${(pkg.approxBytes/1024/1024).toFixed(1).replace('.',',')} Mo`);
+      toast(automatic
+        ? `✓ Carte hors ligne prête pour la sortie · ${(pkg.approxBytes/1024/1024).toFixed(1).replace('.',',')} Mo`
+        : `Carte hors ligne prête · ${(pkg.approxBytes/1024/1024).toFixed(1).replace('.',',')} Mo`);
+      return pkg;
     } catch (err) {
       setOfflineProgress(false);
-      toast(err?.message || 'Impossible de préparer la carte hors ligne.');
+      if (automatic) toast('⚠️ Carte hors ligne non préparée. L’activité continue normalement.');
+      else toast(err?.message || 'Impossible de préparer la carte hors ligne.');
+      return null;
     } finally {
       state.offline.preparing = false;
-      offlineUI.prepareBtn.disabled = false;
+      if (offlineUI.prepareBtn) offlineUI.prepareBtn.disabled = false;
     }
+  }
+
+  async function autoPrepareOfflineForActivity(routeToFollow = null) {
+    if (!navigator.onLine) return null;
+    if (routeToFollow?.points?.length) {
+      return createOfflinePackage({ route:routeToFollow, bufferKm:3, automatic:true });
+    }
+    const loc = state.location;
+    if (!loc) {
+      state.offline.pendingActivityPrepare = true;
+      return null;
+    }
+    return createOfflinePackage({ loc, bufferKm:5, automatic:true });
+  }
+
+  async function prepareOfflineArea() {
+    if (state.offline.preparing) return;
+    if (!navigator.onLine) { toast('Connecte-toi pour préparer une nouvelle carte hors ligne.'); return; }
+    const source = offlineUI.sourceSelect?.value || 'route';
+    const bufferKm = Math.max(1, Math.min(5, Number(offlineUI.bufferSelect?.value || 3)));
+
+    if (source === 'route') {
+      if (!state.route?.points?.length) { toast('Charge d’abord un GPX ou un parcours.'); return; }
+      await createOfflinePackage({ route:state.route, bufferKm, automatic:false });
+      return;
+    }
+
+    let loc = state.location;
+    if (!loc && 'geolocation' in navigator) {
+      try {
+        const pos = await new Promise((resolve,reject) => navigator.geolocation.getCurrentPosition(resolve,reject,{enableHighAccuracy:true,maximumAge:3000,timeout:12000}));
+        loc = { lat:pos.coords.latitude, lon:pos.coords.longitude };
+      } catch (_) {}
+    }
+    if (!loc) { toast('Position GPS indisponible.'); return; }
+    await createOfflinePackage({ loc, bufferKm, automatic:false });
   }
 
   async function renderOfflineAreas() {
@@ -2796,7 +2870,7 @@
   }
 
   function registerSW() {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.9.0', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.9.1', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
   }
 
   initMap();

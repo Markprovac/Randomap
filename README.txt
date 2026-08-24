@@ -1,4 +1,4 @@
-Rando Radar v1.9.0
+Rando Radar v1.9.1
 
 Fichiers à publier ensemble :
 - index.html
@@ -22,3 +22,6 @@ Nouveau v1.9.0 : CARTES HORS LIGNE
 
 Important :
 Ouvre au moins une fois la v1.9.0 avec Internet après publication afin que le nouveau service worker mette en cache les fichiers nécessaires à l'utilisation hors ligne.
+
+
+Nouveau v1.9.1 : préparation hors ligne automatique au démarrage d’un parcours (3 km de marge) ou d’une activité libre (5 km autour du départ). Le suivi démarre immédiatement pendant le téléchargement en arrière-plan.

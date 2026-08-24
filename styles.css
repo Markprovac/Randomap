@@ -1280,3 +1280,14 @@ body.activity-choice-open{overflow:hidden}
 @media(max-width:520px){.offline-options{grid-template-columns:1fr}.offline-actions{flex-direction:column}.offline-actions button{width:100%}.offline-item{grid-template-columns:1fr}.offline-item-actions{justify-content:flex-end}}
 
 .offline-place-label{display:inline-block;max-width:120px;transform:translateX(-10px);padding:2px 4px;border-radius:5px;background:rgba(255,255,255,.72);color:#34414c;font-size:9px;font-weight:850;line-height:1.1;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 0 #fff}
+
+/* V1.9.1 — indication de préparation automatique hors ligne */
+.offline-auto-note{
+  margin:8px 0 0;
+  padding:9px 10px;
+  border-radius:12px;
+  background:#eef8f4;
+  color:#356657;
+  font-size:11px;
+  line-height:1.4;
+}

@@ -568,31 +568,122 @@
   }
 
   function buildRouteObject(name, points, meta = {}) {
-    let distance = 0, gain = 0, loss = 0;
-    let high = -Infinity, low = Infinity;
-    for (let i = 0; i < points.length; i++) {
-      if (i) distance += haversine(points[i-1], points[i]);
-      if (Number.isFinite(points[i].ele)) {
-        high = Math.max(high, points[i].ele);
-        low = Math.min(low, points[i].ele);
-        if (i && Number.isFinite(points[i-1].ele)) {
-          const d = points[i].ele - points[i-1].ele;
-          if (d > 1) gain += d;
-          else if (d < -1) loss += -d;
-        }
-      }
-    }
+    const geometryPoints = Array.isArray(points) ? points : [];
+    const distance = routeDistance(geometryPoints);
+    const elevationStats = calculateSmoothedElevationStats(geometryPoints);
     return {
       name: name || 'Parcours',
-      points,
+      points: geometryPoints,
       distanceKm: distance,
-      gain,
-      loss,
-      high: Number.isFinite(high) ? high : null,
-      low: Number.isFinite(low) ? low : null,
+      gain: elevationStats?.gain || 0,
+      loss: elevationStats?.loss || 0,
+      high: elevationStats?.high ?? null,
+      low: elevationStats?.low ?? null,
+      rawGain: elevationStats?.rawGain ?? null,
+      rawLoss: elevationStats?.rawLoss ?? null,
+      elevationProfile: elevationStats?.profile || meta.elevationProfile || null,
+      elevationFiltered: Boolean(elevationStats),
       createdAt: Date.now(),
       ...meta
     };
+  }
+
+  // Le D+/D− ne doit pas additionner le bruit de chaque cellule du modèle
+  // d'altitude. On échantillonne d'abord le tracé à intervalles réguliers,
+  // puis on applique un filtre médian + moyenne pondérée et enfin un seuil
+  // vertical de 8 m. Une vraie descente/remontée > 8 m reste comptée ; les
+  // petites oscillations parasites ne gonflent plus le dénivelé cumulé.
+  function calculateSmoothedElevationStats(points) {
+    if (!Array.isArray(points) || points.length < 2) return null;
+    const known = points.filter(p => Number.isFinite(Number(p.ele))).length;
+    if (known / points.length < .7) return null;
+
+    const sampled = resampleRouteByDistance(points, 420).filter(p => Number.isFinite(Number(p.ele)));
+    if (sampled.length < 2) return null;
+    const raw = sampled.map(p => Number(p.ele));
+    const rawChanges = cumulativeElevationWithDeadband(raw, 1);
+
+    const median = raw.map((_, i) => {
+      const vals = raw.slice(Math.max(0, i - 2), Math.min(raw.length, i + 3)).sort((a,b) => a-b);
+      return vals[Math.floor(vals.length / 2)];
+    });
+    const weights = [1,2,3,2,1];
+    const smooth = median.map((_, i) => {
+      let sum = 0, wsum = 0;
+      for (let k = -2; k <= 2; k++) {
+        const idx = Math.max(0, Math.min(median.length - 1, i + k));
+        const w = weights[k + 2];
+        sum += median[idx] * w; wsum += w;
+      }
+      return sum / wsum;
+    });
+    // Conserver fidèlement les altitudes de départ/arrivée après filtrage médian.
+    smooth[0] = median[0];
+    smooth[smooth.length - 1] = median[median.length - 1];
+
+    const filteredChanges = cumulativeElevationWithDeadband(smooth, 8);
+    const profile = sampled.map((p, i) => ({ ...p, ele: Number(smooth[i].toFixed(1)) }));
+    return {
+      gain: filteredChanges.gain,
+      loss: filteredChanges.loss,
+      high: Math.max(...smooth),
+      low: Math.min(...smooth),
+      rawGain: rawChanges.gain,
+      rawLoss: rawChanges.loss,
+      profile
+    };
+  }
+
+  function cumulativeElevationWithDeadband(values, threshold = 8) {
+    if (!Array.isArray(values) || values.length < 2) return { gain: 0, loss: 0 };
+    let gain = 0, loss = 0, reference = Number(values[0]);
+    for (let i = 1; i < values.length; i++) {
+      const current = Number(values[i]);
+      if (!Number.isFinite(current)) continue;
+      const delta = current - reference;
+      if (delta >= threshold) { gain += delta; reference = current; }
+      else if (delta <= -threshold) { loss += -delta; reference = current; }
+    }
+    // Le résidu final (< seuil) est ajouté uniquement s'il prolonge la tendance
+    // générale, pour ne pas perdre les derniers mètres d'une montée/descente.
+    const end = Number(values[values.length - 1]);
+    if (Number.isFinite(end)) {
+      const residual = end - reference;
+      if (residual > 0) gain += residual;
+      else if (residual < 0) loss += -residual;
+    }
+    return { gain, loss };
+  }
+
+  function resampleRouteByDistance(points, maxPoints = 420) {
+    if (!Array.isArray(points) || points.length < 2) return (points || []).map(p => ({...p}));
+    const cumulative = buildCumulativeRouteKm(points);
+    const total = cumulative[cumulative.length - 1] || 0;
+    if (total <= 0) return points.map(p => ({...p}));
+    // Environ un point tous les 60 m, avec un plafond pour ne pas surcharger l'API altitude.
+    const count = Math.max(2, Math.min(maxPoints, Math.ceil((total * 1000) / 60) + 1));
+    const out = [];
+    let seg = 1;
+    for (let i = 0; i < count; i++) {
+      const target = total * i / (count - 1);
+      while (seg < cumulative.length - 1 && cumulative[seg] < target) seg++;
+      const aIdx = Math.max(0, seg - 1), bIdx = Math.min(points.length - 1, seg);
+      const a = points[aIdx], b = points[bIdx];
+      const span = Math.max(1e-9, cumulative[bIdx] - cumulative[aIdx]);
+      const t = Math.max(0, Math.min(1, (target - cumulative[aIdx]) / span));
+      const ae = Number(a.ele), be = Number(b.ele);
+      let ele = null;
+      if (Number.isFinite(ae) && Number.isFinite(be)) ele = ae + (be - ae) * t;
+      else if (Number.isFinite(ae)) ele = ae;
+      else if (Number.isFinite(be)) ele = be;
+      out.push({
+        lat: Number(a.lat) + (Number(b.lat) - Number(a.lat)) * t,
+        lon: Number(a.lon) + (Number(b.lon) - Number(a.lon)) * t,
+        ele,
+        time: t < .5 ? (a.time || null) : (b.time || null)
+      });
+    }
+    return out;
   }
 
   function drawRoute(fit = false) {
@@ -1052,20 +1143,29 @@
       <div class="surface-row"><span>${label}</span><div class="surface-bar"><i class="${cls}" style="width:${Math.round(b[key]*100)}%"></i></div><strong>${Math.round(b[key]*100)} %</strong></div>`).join('')}</div>`;
   }
 
-  async function elevatedRouteCopy(route, maxPoints = 190) {
-    let points = downsamplePreserve(route.points || [], maxPoints).map(p => ({...p}));
+  async function elevatedRouteCopy(route, maxPoints = 240) {
+    const originalPoints = route.points || [];
+    let points = resampleRouteByDistance(originalPoints, maxPoints);
     if (points.length < 2) throw new Error('Tracé insuffisant pour calculer le profil.');
     const known = points.filter(p => Number.isFinite(Number(p.ele))).length;
     if (known / points.length < .9) {
-      if (!navigator.onLine) return buildRouteObject(route.name, points, { ...route });
+      if (!navigator.onLine) {
+        const offline = buildRouteObject(route.name, points, { ...route });
+        offline.distanceKm = routeDistance(originalPoints);
+        return offline;
+      }
       points = await addElevations(points);
     }
-    const { points: _points, distanceKm: _distanceKm, gain: _gain, loss: _loss, high: _high, low: _low, ...meta } = route;
-    return buildRouteObject(route.name, points, meta);
+    const { points: _points, distanceKm: _distanceKm, gain: _gain, loss: _loss, high: _high, low: _low, rawGain: _rawGain, rawLoss: _rawLoss, elevationProfile: _ep, ...meta } = route;
+    const elevated = buildRouteObject(route.name, points, meta);
+    // La distance reste calculée sur la géométrie complète, jamais sur la copie
+    // simplifiée destinée au relief.
+    elevated.distanceKm = routeDistance(originalPoints);
+    return elevated;
   }
 
   function buildElevationChartHtml(route, chartKey, progressRatio = null) {
-    const allPoints = route?.points || [];
+    const allPoints = (route?.elevationProfile?.length ? route.elevationProfile : route?.points) || [];
     const pts = allPoints.filter(p => Number.isFinite(Number(p.ele)));
     if (pts.length < 2 || pts.length / Math.max(1, allPoints.length) < .7) return '<div class="elevation-unavailable">Profil altimétrique indisponible pour ce tracé.</div>';
     const cumulative = buildCumulativeRouteKm(pts);
@@ -1084,6 +1184,10 @@
     state.elevationCharts.set(chartKey, { route, points: pts, cumulative, total, xy, W, left, innerW });
     const pr = Number.isFinite(progressRatio) ? clamp01(progressRatio) : null;
     const px = pr == null ? left : left + pr * innerW;
+    const rawGain = Number(route?.rawGain), filteredGain = Number(route?.gain);
+    const filterDiagnostic = Number.isFinite(rawGain) && Number.isFinite(filteredGain) && rawGain > filteredGain + 20
+      ? `D+ brut ${Math.round(rawGain)} m → lissé ${Math.round(filteredGain)} m`
+      : 'Profil lissé · micro-variations altimétriques ignorées';
     return `<div class="elevation-chart" data-elevation-chart="${escapeHtml(chartKey)}">
       <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="Profil altimétrique interactif">
         <line class="elev-grid" x1="${left}" y1="${top}" x2="${W-right}" y2="${top}" />
@@ -1099,6 +1203,7 @@
         <text class="elev-alt-label" x="${left+4}" y="${top+innerH-5}">${Math.round(min)} m</text>
       </svg>
       <div class="elevation-readout"><span>Distance <strong data-elev-distance>0,0 km</strong></span><span>Altitude <strong data-elev-altitude>${Math.round(elevations[0])} m</strong></span><span class="elevation-readout-hint">↔ Glisser</span></div>
+      <div class="elevation-filter-note">${filterDiagnostic} pour le calcul D+/D−</div>
     </div>`;
   }
 
@@ -1187,12 +1292,12 @@
     result.detailPromise = (async () => {
       await ensureHikeGeometry(result);
       const profileKey = result.profile || state.hikeFinder.profile || 'hike';
-      const base = buildRouteObject(result.name, downsamplePreserve(result.points, 190).map(p => ({...p})), {
+      const base = buildRouteObject(result.name, (result.points.length > 3000 ? resampleRouteByDistance(result.points, 3000) : result.points.map(p => ({...p}))), {
         source:`osm-${profileKey}`, transportMode:getFinderProfile(profileKey).transportMode, plannerProfile:profileKey,
         osmRelationId:result.id, osmRef:result.ref||'', osmNetwork:result.network||'', metrics:result.metrics
       });
       let elevated = base;
-      try { elevated = await elevatedRouteCopy(base, 190); } catch (_) { /* fiche utilisable même sans service d'altitude */ }
+      try { elevated = await elevatedRouteCopy(base, 240); } catch (_) { /* fiche utilisable même sans service d'altitude */ }
       const detail = routeDetails(elevated, profileKey, result.metrics);
       detail.reliefAvailable = elevated.high != null;
       result.detailRoute = elevated;
@@ -1265,11 +1370,17 @@
     ui.routeElevationSection.classList.add('hidden');
     ui.routeElevationChart.innerHTML = '<div class="finder-detail-loading compact"><span class="finder-detail-spinner">↻</span><small>Calcul du profil altimétrique…</small></div>';
     try {
-      const elevated = await elevatedRouteCopy(route, 210);
+      const elevated = await elevatedRouteCopy(route, 240);
       if (serial !== state.routeDetailSerial || state.route !== route) return;
       // On enrichit aussi le parcours courant afin que les stats D+/D− deviennent disponibles pour un GPX sans altitude.
       if (elevated.high != null) {
         route.gain = elevated.gain; route.loss = elevated.loss; route.high = elevated.high; route.low = elevated.low;
+        route.rawGain = elevated.rawGain; route.rawLoss = elevated.rawLoss;
+        route.elevationProfile = elevated.elevationProfile || elevated.points;
+        route.elevationFiltered = true;
+        // La distance est toujours recalculée sur le tracé complet.
+        route.distanceKm = routeDistance(route.points || []);
+        ui.routeDistance.textContent = `${route.distanceKm.toFixed(1)} km`;
         ui.routeGain.textContent = `${Math.round(route.gain)} m`;
         ui.routeLoss.textContent = `${Math.round(route.loss)} m`;
         ui.routeHigh.textContent = `${Math.round(route.high)} m`;
@@ -1628,16 +1739,12 @@
     await ensureHikeGeometry(result);
     const profileKey = result.profile || state.hikeFinder.profile || 'hike';
     const finderProfile = getFinderProfile(profileKey);
-    let points;
-    if (addRelief && result.detailRoute?.points?.length) {
-      points = result.detailRoute.points.map(p => ({...p}));
-    } else {
-      points = downsamplePreserve(result.points, 450).map(p => ({ ...p }));
-      if (addRelief) {
-        try { points = await addElevations(points); } catch (_) { /* le tracé reste utilisable sans relief */ }
-      }
-    }
-    return buildRouteObject(result.name, points, {
+    // Le parcours principal conserve la géométrie détaillée OSM. On ne réutilise
+    // plus la version de 190/240 points créée uniquement pour l'altimétrie.
+    const geometryPoints = result.points.length > 3000
+      ? resampleRouteByDistance(result.points, 3000)
+      : result.points.map(p => ({...p}));
+    const route = buildRouteObject(result.name, geometryPoints, {
       source: `osm-${profileKey}`,
       transportMode: finderProfile.transportMode,
       plannerProfile: profileKey,
@@ -1646,6 +1753,20 @@
       osmNetwork: result.network || '',
       metrics: result.metrics || null
     });
+    if (addRelief) {
+      let relief = result.detailRoute || null;
+      if (!relief) {
+        try { relief = await elevatedRouteCopy(route, 240); } catch (_) { relief = null; }
+      }
+      if (relief?.high != null) {
+        route.gain = relief.gain; route.loss = relief.loss; route.high = relief.high; route.low = relief.low;
+        route.rawGain = relief.rawGain; route.rawLoss = relief.rawLoss;
+        route.elevationProfile = relief.elevationProfile || relief.points;
+        route.elevationFiltered = true;
+      }
+    }
+    route.distanceKm = routeDistance(route.points);
+    return route;
   }
 
   async function handleHikeResultAction(e) {
@@ -1946,14 +2067,25 @@
     if (state.planner.routePoints.length < 2) return;
     ui.plannerSaveBtn.disabled = true;
     ui.plannerStatus.textContent = 'Récupération du relief…';
+    const profile = getPlannerProfile();
+    const defaultName = `${profile.label} ${new Date().toLocaleDateString('fr-FR')}`;
     try {
-      let pts = downsamplePreserve(state.planner.routePoints, 600).map(p => ({...p}));
-      pts = await addElevations(pts);
-      const profile = getPlannerProfile();
-      const defaultName = `${profile.label} ${new Date().toLocaleDateString('fr-FR')}`;
       const entered = window.prompt('Nom du parcours', defaultName);
       const name = (entered || defaultName).trim().slice(0, 80) || defaultName;
-      const route = buildRouteObject(name, pts, { source: 'planner', plannerProfile: state.planner.mode, transportMode: profile.activityMode === 'hike' ? 'hike' : 'bike' });
+      const geometry = state.planner.routePoints.length > 3000
+        ? resampleRouteByDistance(state.planner.routePoints, 3000)
+        : state.planner.routePoints.map(p => ({...p}));
+      const route = buildRouteObject(name, geometry, { source: 'planner', plannerProfile: state.planner.mode, transportMode: profile.activityMode === 'hike' ? 'hike' : 'bike' });
+      try {
+        const relief = await elevatedRouteCopy(route, 240);
+        if (relief.high != null) {
+          route.gain = relief.gain; route.loss = relief.loss; route.high = relief.high; route.low = relief.low;
+          route.rawGain = relief.rawGain; route.rawLoss = relief.rawLoss;
+          route.elevationProfile = relief.elevationProfile || relief.points;
+          route.elevationFiltered = true;
+        }
+      } catch (_) { /* parcours conservé même si le relief est indisponible */ }
+      route.distanceKm = routeDistance(route.points);
       saveRouteLocal(route);
       state.route = route;
       drawRoute(false);
@@ -1962,15 +2094,7 @@
       renderSavedRoutes();
       toast(`Parcours « ${name} » enregistré.`);
     } catch (err) {
-      toast('Le parcours est créé, mais le relief n’a pas pu être récupéré.');
-      const profile = getPlannerProfile();
-      const route = buildRouteObject(`${profile.label} ${new Date().toLocaleDateString('fr-FR')}`, downsamplePreserve(state.planner.routePoints, 600), { source: 'planner', plannerProfile: state.planner.mode, transportMode: profile.activityMode === 'hike' ? 'hike' : 'bike' });
-      saveRouteLocal(route);
-      state.route = route;
-      drawRoute(false);
-      renderRouteStats();
-      stopPlanner(true);
-      renderSavedRoutes();
+      toast('Impossible d’enregistrer ce parcours.');
     } finally {
       ui.plannerSaveBtn.disabled = false;
     }

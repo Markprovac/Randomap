@@ -38,6 +38,6 @@ V1.10.4 : routage hybride réactif — Rando/Route via routing.openstreetmap.de 
 
 V1.10.5 : vélo route OSM immédiat + contrôle des surfaces OSM + correction Valhalla Road si nécessaire.
 
-V1.10.6 : contrôle Vélo route strict — OSM immédiat, rejet des surfaces gravel/terre/non revêtues et des chemins non pavés, recalcul Valhalla Road, seconde vérification avant enregistrement.
+V1.10.10 : contrôle Vélo route strict — OSM immédiat, rejet des surfaces gravel/terre/non revêtues et des chemins non pavés, recalcul Valhalla Road, seconde vérification avant enregistrement.
 
-V1.10.7 : vélo route fail-closed — contrôle plus dense, chemins/pistes uniquement si revêtus et explicitement autorisés aux vélos, aucun parcours au revêtement insuffisamment vérifié ne peut être enregistré.
+V1.10.10 : retour au comportement de validation Vélo route de la V1.10.6 (contrôle souple, pas de blocage systématique si le revêtement est non vérifiable).

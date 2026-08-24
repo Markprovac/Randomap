@@ -1,4 +1,4 @@
-/* Rando Radar v1.10.7 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
+/* Rando Radar v1.10.10 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
 (() => {
   'use strict';
 
@@ -2075,34 +2075,29 @@
     const pathLike = ['track','path','bridleway','footway','pedestrian'].includes(highway);
     const normalRoad = ['motorway','trunk','primary','secondary','tertiary','unclassified','residential','living_street','service','road'].includes(highway);
     const cycleway = highway === 'cycleway';
-    const bicycleExplicitlyAllowed = ['yes','designated','permissive','official'].includes(bicycle);
 
-    // Profil Vélo route TRÈS STRICT :
-    // - gravel/terre/non revêtu : toujours rejeté ;
-    // - track/path/footway/bridleway/etc. : accepté uniquement si la surface est
-    //   explicitement revêtue ET si le vélo y est explicitement autorisé ;
-    // - une route routière classique sans surface= reste acceptable, car OSM
-    //   n'indique pas systématiquement surface=asphalt sur les rues ordinaires ;
-    // - highway=cycleway reste acceptable sans surface=, sauf indication explicite
-    //   d'une mauvaise surface ;
-    // - toute voie atypique ou inconnue non explicitement revêtue est rejetée.
+    // Profil Vélo route STRICT :
+    // - toute surface explicitement gravel/terre/non revêtue est rejetée ;
+    // - track/path/footway/etc. sans preuve de revêtement est rejeté ;
+    // - une vraie route sans tag surface reste acceptée (OSM ne renseigne pas
+    //   toujours surface=asphalt sur les routes ordinaires) ;
+    // - une piste cyclable reste acceptée sauf si sa surface est explicitement mauvaise.
     let bad = false;
     let reason = '';
-    if (bicycle === 'no' || bicycle === 'private') { bad = true; reason = 'interdit vélo'; }
+    if (bicycle === 'no') { bad = true; reason = 'interdit vélo'; }
     else if (highway === 'steps') { bad = true; reason = 'escaliers'; }
     else if (roughSurface) { bad = true; reason = `surface ${surface || 'non revêtue'}`; }
     else if (badSmoothness) { bad = true; reason = 'surface dégradée'; }
-    else if (pathLike && (!paved || !bicycleExplicitlyAllowed)) {
-      bad = true;
-      reason = !paved ? 'chemin/sentier non revêtu' : 'chemin hors réseau vélo route';
-    }
+    else if (pathLike && !paved) { bad = true; reason = 'chemin/sentier non revêtu'; }
     else if (!highway) { bad = true; reason = 'type de voie inconnu'; }
-    else if (!paved && !normalRoad && !cycleway && !pathLike) {
+    else if (!paved && !normalRoad && !cycleway) {
+      // Une voie atypique non explicitement revêtue n'est pas considérée sûre
+      // pour un vélo de route à pneus fins.
       bad = true;
       reason = 'revêtement non garanti';
     }
 
-    return { bad, reason, highway, surface, paved, normalRoad, cycleway, bicycleExplicitlyAllowed };
+    return { bad, reason, highway, surface, paved, normalRoad, cycleway };
   }
 
   async function fetchOverpassFast(query, timeoutMs = 5200) {
@@ -2140,10 +2135,10 @@
     if (points.length < 2) return { inconclusive: true, shouldRefine: false, badRatio: 0 };
 
     const km = routeDistance(points);
-    const count = Math.max(16, Math.min(120, Math.ceil(km / 0.20) + 1));
+    const count = Math.max(10, Math.min(48, Math.ceil(km / 0.40) + 1));
     const samples = sampleRoute(points, count).map(x => x.point);
     const query = `[out:json][timeout:12];(\n${samples.map(p =>
-      `way(around:28,${p.lat.toFixed(6)},${p.lon.toFixed(6)})[\"highway\"];`
+      `way(around:32,${p.lat.toFixed(6)},${p.lon.toFixed(6)})[\"highway\"];`
     ).join('\n')}\n);out tags geom;`;
 
     let data;
@@ -2165,7 +2160,7 @@
         const d = pointWayDistanceMeters(sample, way.geometry);
         if (d < bestD) { bestD = d; best = way; }
       }
-      if (!best || bestD > 22) continue;
+      if (!best || bestD > 24) continue;
       matched++;
       const assessment = roadWayAssessment(best.tags || {});
       if (assessment.bad) {
@@ -2176,7 +2171,7 @@
     }
 
     const matchedRatio = matched / Math.max(samples.length, 1);
-    if (matched < Math.max(8, Math.ceil(samples.length * 0.65))) {
+    if (matched < Math.max(4, Math.ceil(samples.length * 0.40))) {
       return { inconclusive: true, shouldRefine: false, badRatio: 0, matchedRatio };
     }
     const badRatio = bad / matched;
@@ -2295,13 +2290,7 @@
                 return;
               }
               if (refinedCheck.inconclusive) {
-                const refinedPoints = refined.map(c => ({ lon: Number(c[0]), lat: Number(c[1]), ele: null }));
-                state.planner.routePoints = refinedPoints;
-                state.planner.routeValid = false;
-                drawPlannerLine(refinedPoints, false);
-                ui.plannerStatus.textContent = `${profile.icon} ⚠ Impossible de confirmer le revêtement sur tout le parcours. Enregistrement Vélo route bloqué.`;
-                updatePlannerButtons();
-                return;
+                sourceLabel += ' · revêtement partiellement non vérifiable';
               }
             } catch (_) {
               if (serial !== state.planner.requestSerial) return;
@@ -2315,14 +2304,9 @@
                 updatePlannerButtons();
                 return;
               }
-              // Contrôle inconclusif + Valhalla indisponible : profil Vélo route
-              // non validable. On affiche le tracé OSM mais on bloque l'enregistrement.
-              state.planner.routePoints = instantPoints;
-              state.planner.routeValid = false;
-              drawPlannerLine(instantPoints, false);
-              ui.plannerStatus.textContent = `${profile.icon} ⚠ Revêtement non vérifiable et Valhalla Route indisponible. Enregistrement Vélo route bloqué.`;
-              updatePlannerButtons();
-              return;
+              // Contrôle seulement inconclusif : on garde le tracé OSM avec avertissement.
+              coordsOut = coordsOut;
+              sourceLabel = 'OSM vélo · ⚠ revêtement non vérifiable';
             }
           } else {
             sourceLabel = 'OSM vélo · revêtement contrôlé';
@@ -2347,15 +2331,7 @@
             updatePlannerButtons();
             return;
           }
-          if (fallbackCheck.inconclusive) {
-            const fallbackPoints = coordsOut.map(c => ({ lon: Number(c[0]), lat: Number(c[1]), ele: null }));
-            state.planner.routePoints = fallbackPoints;
-            state.planner.routeValid = false;
-            drawPlannerLine(fallbackPoints, false);
-            ui.plannerStatus.textContent = `${profile.icon} ⚠ Impossible de vérifier suffisamment le revêtement du tracé Valhalla. Enregistrement Vélo route bloqué.`;
-            updatePlannerButtons();
-            return;
-          }
+          if (fallbackCheck.inconclusive) sourceLabel += ' · revêtement partiellement non vérifiable';
         }
       } else {
         // Gravel / VTT : profils spécialisés Valhalla en priorité.
@@ -3769,7 +3745,7 @@
   }
 
   function registerSW() {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.7', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.10', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
   }
 
   initMap();

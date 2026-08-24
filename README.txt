@@ -41,3 +41,5 @@ V1.10.5 : vélo route OSM immédiat + contrôle des surfaces OSM + correction Va
 V1.10.6 : contrôle Vélo route strict — OSM immédiat, rejet des surfaces gravel/terre/non revêtues et des chemins non pavés, recalcul Valhalla Road, seconde vérification avant enregistrement.
 
 V1.10.7 : vélo route fail-closed — contrôle plus dense, chemins/pistes uniquement si revêtus et explicitement autorisés aux vélos, aucun parcours au revêtement insuffisamment vérifié ne peut être enregistré.
+
+V1.10.9 : contrôle Vélo route par nœuds/ways OSM exacts issus des annotations OSRM ; tracé provisoire pointillé jusqu'à validation ; contrôle Valhalla géométrique renforcé.

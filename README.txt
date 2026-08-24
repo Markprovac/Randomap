@@ -19,3 +19,12 @@ V1.4.2 : correction du décalage horizontal apparaissant après le chargement de
 
 
 V1.5.0 : ajout du bouton « Démarrer ce parcours » pour suivre un GPX importé/enregistré, avec distance restante, progression et écart au tracé.
+
+
+V1.6.0 — profils du planificateur
+- Randonnée : profil piéton.
+- Vélo route : Valhalla bicycle_type Road, routes/surfaces adaptées privilégiées.
+- Gravel : Valhalla bicycle_type Cross.
+- VTT : Valhalla bicycle_type Mountain.
+- Repli automatique vers le routeur OSM générique si Valhalla est indisponible.
+- Le profil choisi est mémorisé avec les parcours créés localement.

@@ -1,9 +1,35 @@
-/* Rando Radar v1.5.0 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
+/* Rando Radar v1.6.0 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
 (() => {
   'use strict';
 
   const ROUTER_MIN_INTERVAL = 1100;
   const SAVED_ROUTES_KEY = 'randoRadar.savedRoutes.v1';
+  const VALHALLA_ROUTE_URL = 'https://valhalla1.openstreetmap.de/route';
+  const PLANNER_PROFILES = {
+    hike: {
+      label: 'Randonnée', short: 'Rando', icon: '🥾', activityMode: 'hike',
+      costing: 'pedestrian', costingOptions: {},
+      description: 'sentiers et chemins pédestres privilégiés'
+    },
+    road: {
+      label: 'Vélo route', short: 'Route', icon: '🚴', activityMode: 'bike',
+      costing: 'bicycle',
+      costingOptions: { bicycle: { bicycle_type: 'Road', use_roads: 1.0, use_hills: 0.5 } },
+      description: 'routes et surfaces adaptées au vélo de route privilégiées'
+    },
+    gravel: {
+      label: 'Gravel', short: 'Gravel', icon: '🚲', activityMode: 'bike',
+      costing: 'bicycle',
+      costingOptions: { bicycle: { bicycle_type: 'Cross', use_roads: 0.5, use_hills: 0.5 } },
+      description: 'routes, voies cyclables et pistes roulantes acceptées'
+    },
+    mtb: {
+      label: 'VTT', short: 'VTT', icon: '🚵', activityMode: 'bike',
+      costing: 'bicycle',
+      costingOptions: { bicycle: { bicycle_type: 'Mountain', use_roads: 0.15, use_hills: 0.65 } },
+      description: 'chemins et pistes tout-terrain davantage favorisés'
+    }
+  };
 
   const state = {
     map: null,
@@ -79,6 +105,18 @@
     routeFollowGuide: $('routeFollowGuide'), routeFollowName: $('routeFollowName'), routeFollowRemaining: $('routeFollowRemaining'), routeFollowProgress: $('routeFollowProgress'), routeFollowDeviation: $('routeFollowDeviation'),
     finishActivityModal: $('finishActivityModal'), finishSaveBtn: $('finishSaveBtn'), finishDiscardBtn: $('finishDiscardBtn'), finishCancelBtn: $('finishCancelBtn')
   };
+
+  function getPlannerProfile(mode = state.planner.mode) {
+    return PLANNER_PROFILES[mode] || PLANNER_PROFILES.hike;
+  }
+
+  function applyRouteTransportMode(route) {
+    if (!route) return;
+    const nextMode = route.transportMode === 'bike' ? 'bike' : (route.transportMode === 'hike' ? 'hike' : null);
+    if (!nextMode) return;
+    state.mode = nextMode;
+    document.querySelectorAll('.mode-btn[data-mode]').forEach(b => b.classList.toggle('active', b.dataset.mode === nextMode));
+  }
 
   function initMap() {
     state.map = L.map('map', { zoomControl: false, preferCanvas: true, tap: true }).setView([44.2, 6.7], 8);
@@ -411,7 +449,7 @@
       })).filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon));
       if (pts.length < 2) throw new Error('Tracé vide');
       const name = xml.querySelector('trk > name, rte > name, metadata > name')?.textContent?.trim() || file.name.replace(/\.gpx$/i, '');
-      state.route = buildRouteObject(name, pts);
+      state.route = buildRouteObject(name, pts, { source: 'gpx' });
       drawRoute(true);
       renderRouteStats();
       toast(`Parcours chargé : ${state.route.distanceKm.toFixed(1)} km · tu peux maintenant le démarrer.`);
@@ -420,7 +458,7 @@
     }
   }
 
-  function buildRouteObject(name, points) {
+  function buildRouteObject(name, points, meta = {}) {
     let distance = 0, gain = 0, loss = 0;
     let high = -Infinity, low = Infinity;
     for (let i = 0; i < points.length; i++) {
@@ -443,7 +481,8 @@
       loss,
       high: Number.isFinite(high) ? high : null,
       low: Number.isFinite(low) ? low : null,
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      ...meta
     };
   }
 
@@ -466,6 +505,7 @@
     ui.routeGain.textContent = r.high == null ? '—' : `${Math.round(r.gain)} m`;
     ui.routeLoss.textContent = r.high == null ? '—' : `${Math.round(r.loss)} m`;
     ui.routeHigh.textContent = r.high == null ? '—' : `${Math.round(r.high)} m`;
+    applyRouteTransportMode(r);
     ui.analyzeBtn.disabled = false;
     ui.routeForecast.classList.add('hidden');
     ui.routeForecast.innerHTML = '';
@@ -612,7 +652,8 @@
     clearPlannerLayers();
     ui.plannerPanel.classList.remove('hidden');
     ui.mapWrap.classList.add('planning');
-    ui.plannerStatus.textContent = 'Touchez la carte pour placer le départ.';
+    const profile = getPlannerProfile();
+    ui.plannerStatus.textContent = `${profile.icon} ${profile.label} · Touchez la carte pour placer le départ.`;
     updatePlannerButtons();
     enterMapFullscreen();
   }
@@ -643,7 +684,7 @@
     updatePlannerButtons();
     if (state.planner.waypoints.length === 1) {
       state.planner.routePoints = [{ ...point }];
-      ui.plannerStatus.textContent = 'Départ placé. Touchez la carte pour ajouter l’arrivée ou une étape.';
+      ui.plannerStatus.textContent = `${getPlannerProfile().icon} ${getPlannerProfile().label} · Départ placé. Ajoute l’arrivée ou une étape.`;
       drawPlannerLine(state.planner.routePoints, true);
       return;
     }
@@ -678,11 +719,11 @@
       state.planner.routePoints = [];
       if (state.planner.line) state.map.removeLayer(state.planner.line);
       state.planner.line = null;
-      ui.plannerStatus.textContent = 'Touchez la carte pour placer le départ.';
+      ui.plannerStatus.textContent = `${getPlannerProfile().icon} ${getPlannerProfile().label} · Touchez la carte pour placer le départ.`;
     } else if (state.planner.waypoints.length === 1) {
       state.planner.routePoints = [{...state.planner.waypoints[0]}];
       drawPlannerLine(state.planner.routePoints, true);
-      ui.plannerStatus.textContent = 'Ajoutez une arrivée ou une étape.';
+      ui.plannerStatus.textContent = `${getPlannerProfile().icon} ${getPlannerProfile().label} · Ajoutez une arrivée ou une étape.`;
     } else {
       schedulePlannerRoute();
     }
@@ -692,7 +733,7 @@
     state.planner.waypoints = [];
     state.planner.routePoints = [];
     clearPlannerLayers();
-    ui.plannerStatus.textContent = 'Touchez la carte pour placer le départ.';
+    ui.plannerStatus.textContent = `${getPlannerProfile().icon} ${getPlannerProfile().label} · Touchez la carte pour placer le départ.`;
     updatePlannerButtons();
   }
 
@@ -723,27 +764,67 @@
     state.planner.routing = true;
     state.planner.lastRequestAt = Date.now();
     const serial = ++state.planner.requestSerial;
+    const profile = getPlannerProfile();
     updatePlannerButtons();
-    ui.plannerStatus.textContent = 'Calcul du chemin OpenStreetMap…';
+    ui.plannerStatus.textContent = `${profile.icon} Calcul ${profile.label}…`;
+
     try {
-      const prefix = state.planner.mode === 'bike' ? 'routed-bike' : 'routed-foot';
-      const coords = state.planner.waypoints.map(p => `${p.lon.toFixed(6)},${p.lat.toFixed(6)}`).join(';');
-      const url = `https://routing.openstreetmap.de/${prefix}/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=false&alternatives=false`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error('Routeur indisponible');
+      const payload = {
+        locations: state.planner.waypoints.map(p => ({
+          lat: Number(p.lat.toFixed(6)),
+          lon: Number(p.lon.toFixed(6))
+        })),
+        costing: profile.costing,
+        costing_options: profile.costingOptions,
+        format: 'osrm',
+        shape_format: 'geojson',
+        directions_type: 'none',
+        units: 'kilometers'
+      };
+
+      const res = await fetch(VALHALLA_ROUTE_URL, {
+        method: 'POST',
+        mode: 'cors',
+        cache: 'no-store',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Client-Id': 'markprovac.github.io-rando-radar'
+        },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) throw new Error(`Valhalla ${res.status}`);
       const data = await res.json();
       if (serial !== state.planner.requestSerial) return;
       const coordsOut = data.routes?.[0]?.geometry?.coordinates;
       if (!Array.isArray(coordsOut) || coordsOut.length < 2) throw new Error('Aucun chemin trouvé');
+
       state.planner.routePoints = coordsOut.map(c => ({ lon: Number(c[0]), lat: Number(c[1]), ele: null }));
       drawPlannerLine(state.planner.routePoints, false);
       const km = routeDistance(state.planner.routePoints);
-      ui.plannerStatus.textContent = `${km.toFixed(1)} km · ${state.planner.mode === 'bike' ? 'vélo' : 'à pied'} · ajoutez des étapes si besoin.`;
-    } catch (err) {
-      if (serial !== state.planner.requestSerial) return;
-      state.planner.routePoints = state.planner.waypoints.map(p => ({...p, ele:null}));
-      drawPlannerLine(state.planner.routePoints, true);
-      ui.plannerStatus.textContent = 'Routeur indisponible : liaison directe affichée. Vous pouvez quand même enregistrer.';
+      ui.plannerStatus.textContent = `${profile.icon} ${km.toFixed(1)} km · ${profile.label} · ${profile.description}.`;
+    } catch (advancedErr) {
+      // Secours : ancien routeur OSM. Pour les vélos, ce repli est générique
+      // et ne peut pas distinguer Route / Gravel / VTT.
+      try {
+        const prefix = profile.activityMode === 'bike' ? 'routed-bike' : 'routed-foot';
+        const coords = state.planner.waypoints.map(p => `${p.lon.toFixed(6)},${p.lat.toFixed(6)}`).join(';');
+        const url = `https://routing.openstreetmap.de/${prefix}/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=false&alternatives=false`;
+        const res = await fetch(url, { cache: 'no-store' });
+        if (!res.ok) throw new Error('Routeur de secours indisponible');
+        const data = await res.json();
+        if (serial !== state.planner.requestSerial) return;
+        const coordsOut = data.routes?.[0]?.geometry?.coordinates;
+        if (!Array.isArray(coordsOut) || coordsOut.length < 2) throw new Error('Aucun chemin trouvé');
+        state.planner.routePoints = coordsOut.map(c => ({ lon: Number(c[0]), lat: Number(c[1]), ele: null }));
+        drawPlannerLine(state.planner.routePoints, false);
+        const km = routeDistance(state.planner.routePoints);
+        ui.plannerStatus.textContent = `${profile.icon} ${km.toFixed(1)} km · ${profile.label} · profil de secours générique utilisé.`;
+      } catch (fallbackErr) {
+        if (serial !== state.planner.requestSerial) return;
+        state.planner.routePoints = state.planner.waypoints.map(p => ({...p, ele:null}));
+        drawPlannerLine(state.planner.routePoints, true);
+        ui.plannerStatus.textContent = 'Routeurs indisponibles : liaison directe affichée. Vous pouvez quand même enregistrer.';
+      }
     } finally {
       if (serial === state.planner.requestSerial) {
         state.planner.routing = false;
@@ -767,10 +848,11 @@
     try {
       let pts = downsamplePreserve(state.planner.routePoints, 600).map(p => ({...p}));
       pts = await addElevations(pts);
-      const defaultName = `${state.planner.mode === 'bike' ? 'Vélo' : 'Randonnée'} ${new Date().toLocaleDateString('fr-FR')}`;
+      const profile = getPlannerProfile();
+      const defaultName = `${profile.label} ${new Date().toLocaleDateString('fr-FR')}`;
       const entered = window.prompt('Nom du parcours', defaultName);
       const name = (entered || defaultName).trim().slice(0, 80) || defaultName;
-      const route = buildRouteObject(name, pts);
+      const route = buildRouteObject(name, pts, { source: 'planner', plannerProfile: state.planner.mode, transportMode: profile.activityMode });
       saveRouteLocal(route);
       state.route = route;
       drawRoute(false);
@@ -780,7 +862,8 @@
       toast(`Parcours « ${name} » enregistré.`);
     } catch (err) {
       toast('Le parcours est créé, mais le relief n’a pas pu être récupéré.');
-      const route = buildRouteObject(`Parcours ${new Date().toLocaleDateString('fr-FR')}`, downsamplePreserve(state.planner.routePoints, 600));
+      const profile = getPlannerProfile();
+      const route = buildRouteObject(`${profile.label} ${new Date().toLocaleDateString('fr-FR')}`, downsamplePreserve(state.planner.routePoints, 600), { source: 'planner', plannerProfile: state.planner.mode, transportMode: profile.activityMode });
       saveRouteLocal(route);
       state.route = route;
       drawRoute(false);
@@ -833,7 +916,7 @@
     ui.savedRoutesCard.classList.toggle('hidden', !list.length);
     ui.savedRoutesList.innerHTML = list.map(r => `
       <div class="saved-route-item" data-route-id="${escapeHtml(r.id)}">
-        <div><strong>${escapeHtml(r.name || 'Parcours')}</strong><div class="saved-meta">${Number(r.distanceKm || 0).toFixed(1)} km${Number.isFinite(r.gain) ? ` · D+ ${Math.round(r.gain)} m` : ''}</div></div>
+        <div><strong>${escapeHtml(r.name || 'Parcours')}</strong><div class="saved-meta">${r.plannerProfile && PLANNER_PROFILES[r.plannerProfile] ? `${PLANNER_PROFILES[r.plannerProfile].icon} ${escapeHtml(PLANNER_PROFILES[r.plannerProfile].label)} · ` : ''}${Number(r.distanceKm || 0).toFixed(1)} km${Number.isFinite(r.gain) ? ` · D+ ${Math.round(r.gain)} m` : ''}</div></div>
         <div class="saved-route-actions">
           <button type="button" data-action="load" title="Afficher">🗺️</button>
           <button type="button" data-action="gpx" title="Exporter GPX">GPX</button>
@@ -1425,8 +1508,12 @@
     ui.plannerClearBtn.addEventListener('click', clearPlanner);
     ui.plannerSaveBtn.addEventListener('click', savePlannerRoute);
     document.querySelectorAll('[data-planner-mode]').forEach(btn => btn.addEventListener('click', () => {
-      state.planner.mode = btn.dataset.plannerMode;
+      const nextMode = btn.dataset.plannerMode;
+      if (!PLANNER_PROFILES[nextMode]) return;
+      state.planner.mode = nextMode;
+      const profile = getPlannerProfile();
       document.querySelectorAll('[data-planner-mode]').forEach(b => b.classList.toggle('active', b === btn));
+      ui.plannerStatus.textContent = `${profile.icon} ${profile.label} · ${profile.description}.`;
       if (state.planner.waypoints.length > 1) schedulePlannerRoute();
     }));
     ui.savedRoutesList.addEventListener('click', handleSavedRouteAction);

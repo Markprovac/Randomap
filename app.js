@@ -1,4 +1,4 @@
-/* Rando Radar v1.7.1 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
+/* Rando Radar v1.8.0 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
 (() => {
   'use strict';
 
@@ -11,6 +11,12 @@
     'https://lz4.overpass-api.de/api/interpreter'
   ];
   const WAYMARKED_HIKING_API = 'https://hiking.waymarkedtrails.org/api/v1';
+  const FINDER_PROFILES = {
+    hike:   { label: 'Randonnée', icon: '🥾', relationRoutes: ['hiking','foot'], transportMode: 'hike' },
+    road:   { label: 'Vélo route', icon: '🚴', relationRoutes: ['bicycle'], transportMode: 'bike' },
+    gravel: { label: 'Gravel', icon: '🚲', relationRoutes: ['bicycle'], transportMode: 'bike' },
+    mtb:    { label: 'VTT', icon: '🚵', relationRoutes: ['mtb','bicycle'], transportMode: 'bike' }
+  };
   const ACTIVITY_PROFILES = {
     hike:   { label: 'Randonnée', icon: '🥾', cycling: false, navSpeed: 4,  maxPlausible: 35,  offRouteM: 80 },
     road:   { label: 'Vélo route', icon: '🚴', cycling: true,  navSpeed: 20, maxPlausible: 120, offRouteM: 120 },
@@ -24,19 +30,19 @@
       description: 'sentiers et chemins pédestres privilégiés'
     },
     road: {
-      label: 'Vélo route', short: 'Route', icon: '🚴', activityMode: 'bike',
+      label: 'Vélo route', short: 'Route', icon: '🚴', activityMode: 'road',
       costing: 'bicycle',
       costingOptions: { bicycle: { bicycle_type: 'Road', use_roads: 1.0, use_hills: 0.5 } },
       description: 'routes et surfaces adaptées au vélo de route privilégiées'
     },
     gravel: {
-      label: 'Gravel', short: 'Gravel', icon: '🚲', activityMode: 'bike',
+      label: 'Gravel', short: 'Gravel', icon: '🚲', activityMode: 'gravel',
       costing: 'bicycle',
       costingOptions: { bicycle: { bicycle_type: 'Cross', use_roads: 0.5, use_hills: 0.5 } },
       description: 'routes, voies cyclables et pistes roulantes acceptées'
     },
     mtb: {
-      label: 'VTT', short: 'VTT', icon: '🚵', activityMode: 'bike',
+      label: 'VTT', short: 'VTT', icon: '🚵', activityMode: 'mtb',
       costing: 'bicycle',
       costingOptions: { bicycle: { bicycle_type: 'Mountain', use_roads: 0.15, use_hills: 0.65 } },
       description: 'chemins et pistes tout-terrain davantage favorisés'
@@ -78,6 +84,7 @@
     },
     hikeFinder: {
       active: false,
+      profile: 'hike',
       radiusKm: 5,
       center: null,
       centerMarker: null,
@@ -86,6 +93,8 @@
       results: [],
       loading: false,
       requestSerial: 0,
+      selectedIndex: -1,
+      mapLines: [],
     },
     activity: {
       status: 'idle', // idle | recording | paused | finished
@@ -121,7 +130,7 @@
     gpxInput: $('gpxInput'), analyzeBtn: $('analyzeBtn'), routeCard: $('routeCard'), routeName: $('routeName'), routeDistance: $('routeDistance'), routeGain: $('routeGain'), routeLoss: $('routeLoss'), routeHigh: $('routeHigh'), routeForecast: $('routeForecast'), clearRouteBtn: $('clearRouteBtn'), exportRouteBtn: $('exportRouteBtn'), routeStartBtn: $('routeStartBtn'), routeShowBtn: $('routeShowBtn'),
     hourlyForecast: $('hourlyForecast'), refreshWeatherBtn: $('refreshWeatherBtn'), refreshWeatherIcon: $('refreshWeatherIcon'), refreshWeatherLabel: $('refreshWeatherLabel'), weatherUpdatedAt: $('weatherUpdatedAt'), toast: $('toast'),
     createRouteBtn: $('createRouteBtn'), plannerPanel: $('plannerPanel'), plannerStatus: $('plannerStatus'), plannerGpsBtn: $('plannerGpsBtn'), plannerUndoBtn: $('plannerUndoBtn'), plannerClearBtn: $('plannerClearBtn'), plannerSaveBtn: $('plannerSaveBtn'),
-    hikeFinderPanel: $('hikeFinderPanel'), hikeFinderStatus: $('hikeFinderStatus'), hikeFinderCloseBtn: $('hikeFinderCloseBtn'), hikeFinderGpsBtn: $('hikeFinderGpsBtn'), hikeFinderListBtn: $('hikeFinderListBtn'), hikeFinderResultsCard: $('hikeFinderResultsCard'), hikeFinderResultsSummary: $('hikeFinderResultsSummary'), hikeFinderResultsList: $('hikeFinderResultsList'), hikeFinderNewSearchBtn: $('hikeFinderNewSearchBtn'), routesFindHikesBtn: $('routesFindHikesBtn'),
+    hikeFinderPanel: $('hikeFinderPanel'), hikeFinderStatus: $('hikeFinderStatus'), hikeFinderCloseBtn: $('hikeFinderCloseBtn'), hikeFinderGpsBtn: $('hikeFinderGpsBtn'), hikeFinderListBtn: $('hikeFinderListBtn'), hikeFinderMapResults: $('hikeFinderMapResults'), hikeFinderResultsCard: $('hikeFinderResultsCard'), hikeFinderResultsSummary: $('hikeFinderResultsSummary'), hikeFinderResultsList: $('hikeFinderResultsList'), hikeFinderNewSearchBtn: $('hikeFinderNewSearchBtn'), routesFindHikesBtn: $('routesFindHikesBtn'),
     savedRoutesCard: $('savedRoutesCard'), savedRoutesList: $('savedRoutesList'),
     activityOpenBtn: $('activityOpenBtn'), activityCard: $('activityCard'), activityTitle: $('activityTitle'), activityCloseCardBtn: $('activityCloseCardBtn'), activityStartBtn: $('activityStartBtn'), activityExportBtn: $('activityExportBtn'), activityStats: $('activityStats'), activityDistance: $('activityDistance'), activityTime: $('activityTime'), activitySpeed: $('activitySpeed'), activityAvgSpeed: $('activityAvgSpeed'), activityHelp: $('activityHelp'),
     activityMapPanel: $('activityMapPanel'), activityMapTitle: $('activityMapTitle'), activityMapStatus: $('activityMapStatus'), activityMapDistance: $('activityMapDistance'), activityMapTime: $('activityMapTime'), activityMapSpeed: $('activityMapSpeed'), activityPauseBtn: $('activityPauseBtn'), activityStopBtn: $('activityStopBtn'),
@@ -683,7 +692,11 @@
   }
 
 
-  // ---------- Randonnées autour d’un point (OpenStreetMap / Overpass) ----------
+  // ---------- Parcours autour d’un point (OpenStreetMap / Overpass) ----------
+
+  function getFinderProfile(key = state.hikeFinder.profile) {
+    return FINDER_PROFILES[key] || FINDER_PROFILES.hike;
+  }
 
   function startHikeFinder() {
     if (state.planner.active) stopPlanner(true);
@@ -691,9 +704,10 @@
     state.hikeFinder.active = true;
     ui.hikeFinderPanel.classList.remove('hidden');
     ui.hikeFinderListBtn.classList.toggle('hidden', !state.hikeFinder.results.length);
+    const profile = getFinderProfile();
     ui.hikeFinderStatus.textContent = state.hikeFinder.results.length
-      ? `${state.hikeFinder.results.length} randonnée(s) trouvée(s). Touchez la carte pour rechercher ailleurs.`
-      : 'Touchez la carte pour choisir le centre de recherche.';
+      ? `${state.hikeFinder.results.length} parcours ${profile.label.toLowerCase()} trouvé(s). Touchez la carte pour rechercher ailleurs.`
+      : `Mode ${profile.icon} ${profile.label} · touchez la carte pour choisir le centre de recherche.`;
     showAppScreen('map', { scroll: false });
     setTimeout(() => enterMapFullscreen(), 60);
   }
@@ -711,16 +725,19 @@
     state.hikeFinder.centerMarker = null;
     state.hikeFinder.resultLayer = null;
     state.hikeFinder.previewLayer = null;
+    state.hikeFinder.mapLines = [];
+    state.hikeFinder.selectedIndex = -1;
   }
 
   function setHikeFinderCenter(point) {
     state.hikeFinder.center = { lat: Number(point.lat), lon: Number(point.lon) };
     if (state.hikeFinder.centerMarker) state.map.removeLayer(state.hikeFinder.centerMarker);
+    const profile = getFinderProfile();
     const icon = L.divIcon({
       className: '',
-      html: '<div class="hike-search-center">🥾</div>',
-      iconSize: [30, 30],
-      iconAnchor: [15, 15]
+      html: `<div class="hike-search-center">${profile.icon}</div>`,
+      iconSize: [32, 32],
+      iconAnchor: [16, 16]
     });
     state.hikeFinder.centerMarker = L.marker([point.lat, point.lon], { icon, zIndexOffset: 1200 }).addTo(state.map);
   }
@@ -746,7 +763,7 @@
     }
   }
 
-  async function fetchOverpass(query, timeoutMs = 32000) {
+  async function fetchOverpass(query, timeoutMs = 42000) {
     let lastError = null;
     for (const endpoint of OVERPASS_ENDPOINTS) {
       const controller = new AbortController();
@@ -777,13 +794,99 @@
   }
 
   function networkLabel(network) {
-    return ({ iwn: 'International', nwn: 'National', rwn: 'Régional', lwn: 'Local' })[network] || '';
+    return ({ iwn: 'International', nwn: 'National', rwn: 'Régional', lwn: 'Local', icn: 'International', ncn: 'National', rcn: 'Régional', lcn: 'Local' })[network] || '';
   }
 
   function distanceTagText(tags = {}) {
     const raw = String(tags.distance || '').trim();
     if (!raw) return '';
     return raw.match(/[a-zA-Z]/) ? raw : `${raw} km`;
+  }
+
+  const PAVED_SURFACES = new Set(['asphalt','paved','concrete','concrete:plates','concrete:lanes','paving_stones','sett']);
+  const GRAVEL_SURFACES = new Set(['gravel','fine_gravel','compacted','unpaved','ground','dirt','earth','pebblestone','woodchips','sand','rock']);
+  const ROAD_HIGHWAYS = new Set(['primary','secondary','tertiary','unclassified','residential','service','living_street','cycleway','road']);
+  const TRAIL_HIGHWAYS = new Set(['track','path','bridleway','footway','steps']);
+
+  function relationSegmentsFromElement(rel, wayMap = null) {
+    return (rel.members || [])
+      .filter(m => m.type === 'way')
+      .map(m => {
+        const way = wayMap?.get(Number(m.ref));
+        const geometry = (way && Array.isArray(way.geometry)) ? way.geometry : m.geometry;
+        return Array.isArray(geometry) ? geometry
+          .map(g => ({ lat: Number(g.lat), lon: Number(g.lon), ele: null }))
+          .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon)) : [];
+      })
+      .filter(seg => seg.length > 1);
+  }
+
+  function routeWayMetrics(rel, wayMap) {
+    let totalKm = 0, pavedKm = 0, roughKm = 0, technicalKm = 0, roadBadKm = 0, taggedKm = 0;
+    for (const m of rel.members || []) {
+      if (m.type !== 'way') continue;
+      const way = wayMap.get(Number(m.ref));
+      if (!way?.geometry?.length) continue;
+      const seg = way.geometry.map(g => ({ lat: Number(g.lat), lon: Number(g.lon) }))
+        .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon));
+      if (seg.length < 2) continue;
+      const km = routeDistance(seg);
+      totalKm += km;
+      const tags = way.tags || {};
+      const surface = String(tags.surface || '').toLowerCase();
+      const highway = String(tags.highway || '').toLowerCase();
+      const bicycle = String(tags.bicycle || '').toLowerCase();
+      const mtbScale = tags['mtb:scale'];
+      const paved = PAVED_SURFACES.has(surface);
+      const gravel = GRAVEL_SURFACES.has(surface);
+      const trail = TRAIL_HIGHWAYS.has(highway);
+      const road = ROAD_HIGHWAYS.has(highway);
+      if (surface || highway) taggedKm += km;
+      if (paved || (road && !gravel)) pavedKm += km;
+      if (gravel || highway === 'track') roughKm += km;
+      if (mtbScale != null || highway === 'bridleway' || (highway === 'path' && !paved)) technicalKm += km;
+      if (highway === 'steps' || (trail && !paved)) roadBadKm += km;
+      else if (gravel && !paved) roadBadKm += km;
+    }
+    const den = Math.max(totalKm, 0.001);
+    return {
+      totalKm,
+      pavedRatio: pavedKm / den,
+      roughRatio: roughKm / den,
+      technicalRatio: technicalKm / den,
+      roadBadRatio: roadBadKm / den,
+      taggedRatio: taggedKm / den
+    };
+  }
+
+  function profileAcceptsRelation(profileKey, rel, metrics) {
+    const routeType = String(rel.tags?.route || '').toLowerCase();
+    if (profileKey === 'hike') return routeType === 'hiking' || routeType === 'foot';
+    if (profileKey === 'road') {
+      if (routeType !== 'bicycle') return false;
+      // Vélo route : on élimine les relations comportant une part significative
+      // de chemins/surfaces non revêtues. Les voies cyclables revêtues restent acceptées.
+      return metrics.roadBadRatio <= 0.08 && metrics.technicalRatio <= 0.05;
+    }
+    if (profileKey === 'gravel') {
+      if (routeType !== 'bicycle') return false;
+      // Gravel : routes + pistes roulantes, mais on évite les parcours franchement techniques.
+      return metrics.technicalRatio <= 0.30;
+    }
+    if (profileKey === 'mtb') {
+      if (routeType === 'mtb') return true;
+      if (routeType !== 'bicycle') return false;
+      return metrics.technicalRatio >= 0.08 || metrics.roughRatio >= 0.18;
+    }
+    return true;
+  }
+
+  function profileQualityText(profileKey, metrics) {
+    const pct = v => `${Math.round(Math.max(0, Math.min(1, v)) * 100)} %`;
+    if (profileKey === 'road') return `revêtu/route ${pct(1 - metrics.roadBadRatio)}`;
+    if (profileKey === 'gravel') return metrics.roughRatio > .08 ? `chemins/pistes ${pct(metrics.roughRatio)}` : 'parcours cyclable mixte';
+    if (profileKey === 'mtb') return `tout-terrain ${pct(Math.max(metrics.roughRatio, metrics.technicalRatio))}`;
+    return '';
   }
 
   function hikeResultMeta(result) {
@@ -793,8 +896,57 @@
     if (net) parts.push(net);
     if (result.distanceKm != null) parts.push(`${result.distanceKm.toFixed(1).replace('.', ',')} km`);
     else if (result.distanceTag) parts.push(result.distanceTag);
+    if (result.profileHint) parts.push(result.profileHint);
     if (result.from && result.to) parts.push(`${result.from} → ${result.to}`);
-    return parts.join(' · ') || 'Itinéraire de randonnée OpenStreetMap';
+    return parts.join(' · ') || 'Itinéraire OpenStreetMap';
+  }
+
+  function buildFinderQuery(profileKey, point, radiusM) {
+    const lat = Number(point.lat).toFixed(6), lon = Number(point.lon).toFixed(6);
+    let relationSelector = '';
+    if (profileKey === 'hike') {
+      relationSelector = `relation(around:${radiusM},${lat},${lon})["type"="route"]["route"~"^(hiking|foot)$"];`;
+    } else if (profileKey === 'mtb') {
+      relationSelector = `relation(around:${radiusM},${lat},${lon})["type"="route"]["route"="mtb"];relation(around:${radiusM},${lat},${lon})["type"="route"]["route"="bicycle"];`;
+    } else {
+      relationSelector = `relation(around:${radiusM},${lat},${lon})["type"="route"]["route"="bicycle"];`;
+    }
+    return `[out:json][timeout:38];(${relationSelector})->.routes;(.routes;way(r.routes););out body geom qt;`;
+  }
+
+  function parseFinderResults(data, profileKey) {
+    const elements = data.elements || [];
+    const ways = new Map(elements.filter(el => el.type === 'way').map(w => [Number(w.id), w]));
+    const seen = new Set();
+    const results = [];
+    for (const rel of elements.filter(el => el.type === 'relation')) {
+      if (seen.has(rel.id)) continue;
+      seen.add(rel.id);
+      const tags = rel.tags || {};
+      const segments = relationSegmentsFromElement(rel, ways);
+      if (!segments.length) continue;
+      const points = stitchHikeSegments(segments);
+      if (points.length < 2) continue;
+      const metrics = routeWayMetrics(rel, ways);
+      if (!profileAcceptsRelation(profileKey, rel, metrics)) continue;
+      const distanceKm = routeDistance(points);
+      results.push({
+        id: Number(rel.id),
+        name: tags.name || tags['name:fr'] || tags.ref || `${getFinderProfile(profileKey).label} OSM ${rel.id}`,
+        ref: tags.ref || '', network: tags.network || '', operator: tags.operator || '',
+        from: tags.from || '', to: tags.to || '', distanceTag: distanceTagText(tags), tags,
+        center: rel.center || null, points, segments, distanceKm,
+        profile: profileKey, metrics, profileHint: profileQualityText(profileKey, metrics), geometryPromise: null
+      });
+    }
+    // Les parcours les plus proches du point choisi remontent en premier si un centre est connu,
+    // puis tri par nom pour rester stable.
+    const center = state.hikeFinder.center;
+    return results.sort((a,b) => {
+      const ac = a.center && center ? haversine({lat:center.lat,lon:center.lon},{lat:a.center.lat,lon:a.center.lon}) : 9999;
+      const bc = b.center && center ? haversine({lat:center.lat,lon:center.lon},{lat:b.center.lat,lon:b.center.lon}) : 9999;
+      return ac - bc || (a.name || '').localeCompare(b.name || '', 'fr');
+    }).slice(0, 30);
   }
 
   async function searchHikesAround(point) {
@@ -804,52 +956,38 @@
 
     const serial = ++state.hikeFinder.requestSerial;
     state.hikeFinder.loading = true;
+    state.hikeFinder.selectedIndex = -1;
     setHikeFinderCenter({ lat, lon });
-    ui.hikeFinderStatus.textContent = `Recherche dans un rayon de ${state.hikeFinder.radiusKm} km…`;
+    const profile = getFinderProfile();
+    ui.hikeFinderStatus.textContent = `${profile.icon} Recherche ${profile.label.toLowerCase()} dans un rayon de ${state.hikeFinder.radiusKm} km…`;
     ui.hikeFinderListBtn.classList.add('hidden');
+    if (ui.hikeFinderMapResults) ui.hikeFinderMapResults.innerHTML = '<div class="hike-map-loading">Recherche des tracés…</div>';
 
     try {
       const radiusM = Math.round(state.hikeFinder.radiusKm * 1000);
-      const query = `[out:json][timeout:25];relation(around:${radiusM},${lat.toFixed(6)},${lon.toFixed(6)})["type"="route"]["route"="hiking"];out tags center;`;
-      const data = await fetchOverpass(query);
+      const query = buildFinderQuery(state.hikeFinder.profile, { lat, lon }, radiusM);
+      const data = await fetchOverpass(query, 46000);
       if (serial !== state.hikeFinder.requestSerial) return;
 
-      const seen = new Set();
-      const results = (data.elements || [])
-        .filter(el => el.type === 'relation' && !seen.has(el.id) && seen.add(el.id))
-        .map(el => {
-          const tags = el.tags || {};
-          return {
-            id: Number(el.id),
-            name: tags.name || tags['name:fr'] || tags.ref || `Randonnée OSM ${el.id}`,
-            ref: tags.ref || '',
-            network: tags.network || '',
-            operator: tags.operator || '',
-            from: tags.from || '',
-            to: tags.to || '',
-            distanceTag: distanceTagText(tags),
-            tags,
-            center: el.center || null,
-            points: null,
-            segments: null,
-            distanceKm: null,
-            geometryPromise: null
-          };
-        })
-        .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'fr'))
-        .slice(0, 30);
-
+      const results = parseFinderResults(data, state.hikeFinder.profile);
       state.hikeFinder.results = results;
       renderHikeFinderResults();
+      renderHikeFinderMapResults();
+      drawFinderResultsOnMap(true);
       ui.hikeFinderResultsCard.classList.toggle('hidden', !results.length);
       ui.hikeFinderListBtn.classList.toggle('hidden', !results.length);
       ui.hikeFinderStatus.textContent = results.length
-        ? `${results.length} randonnée(s) trouvée(s) dans ${state.hikeFinder.radiusKm} km.`
-        : `Aucune randonnée OSM trouvée dans ${state.hikeFinder.radiusKm} km. Essaie un rayon plus grand.`;
+        ? `${results.length} parcours ${profile.label.toLowerCase()} trouvé(s) dans ${state.hikeFinder.radiusKm} km.`
+        : `Aucun parcours ${profile.label.toLowerCase()} compatible trouvé dans ${state.hikeFinder.radiusKm} km.`;
     } catch (err) {
       if (serial !== state.hikeFinder.requestSerial) return;
+      state.hikeFinder.results = [];
+      renderHikeFinderResults();
+      renderHikeFinderMapResults();
+      if (state.hikeFinder.resultLayer) state.map.removeLayer(state.hikeFinder.resultLayer);
+      state.hikeFinder.resultLayer = null;
       ui.hikeFinderStatus.textContent = 'Recherche indisponible pour le moment.';
-      toast('Impossible de rechercher les randonnées OpenStreetMap pour le moment.');
+      toast(err.message || 'Impossible de rechercher les parcours OpenStreetMap pour le moment.');
     } finally {
       if (serial === state.hikeFinder.requestSerial) state.hikeFinder.loading = false;
     }
@@ -857,17 +995,18 @@
 
   function renderHikeFinderResults() {
     const list = state.hikeFinder.results;
+    const profile = getFinderProfile();
     if (ui.hikeFinderResultsSummary) {
       ui.hikeFinderResultsSummary.textContent = state.hikeFinder.center
-        ? `${list.length} résultat(s) · rayon ${state.hikeFinder.radiusKm} km autour du point choisi.`
+        ? `${profile.icon} ${profile.label} · ${list.length} résultat(s) · rayon ${state.hikeFinder.radiusKm} km.`
         : `${list.length} résultat(s).`;
     }
     ui.hikeFinderResultsList.innerHTML = list.map((r, i) => `
-      <div class="hike-result-item" data-hike-index="${i}">
-        <div class="hike-result-main">
+      <div class="hike-result-item ${i === state.hikeFinder.selectedIndex ? 'selected' : ''}" data-hike-index="${i}">
+        <button type="button" class="hike-result-select" data-hike-select="${i}" aria-label="Sélectionner ${escapeHtml(r.name)}">
           <div class="hike-result-name">${escapeHtml(r.name)}</div>
           <div class="hike-result-meta">${escapeHtml(hikeResultMeta(r))}</div>
-        </div>
+        </button>
         <div class="hike-result-actions">
           <button type="button" data-hike-action="show" title="Afficher sur la carte">🗺️</button>
           <button type="button" data-hike-action="save" title="Enregistrer dans Mes parcours">💾</button>
@@ -876,13 +1015,76 @@
       </div>`).join('');
   }
 
-  function relationSegmentsFromElement(rel) {
-    return (rel.members || [])
-      .filter(m => m.type === 'way' && Array.isArray(m.geometry) && m.geometry.length > 1)
-      .map(m => m.geometry
-        .map(g => ({ lat: Number(g.lat), lon: Number(g.lon), ele: null }))
-        .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon)))
-      .filter(seg => seg.length > 1);
+  function renderHikeFinderMapResults() {
+    if (!ui.hikeFinderMapResults) return;
+    const list = state.hikeFinder.results;
+    if (!list.length) {
+      ui.hikeFinderMapResults.innerHTML = '<div class="hike-map-empty">Aucun tracé à afficher.</div>';
+      return;
+    }
+    ui.hikeFinderMapResults.innerHTML = list.map((r,i) => `
+      <button type="button" class="hike-map-result ${i === state.hikeFinder.selectedIndex ? 'selected' : ''}" data-hike-map-index="${i}">
+        <span>${getFinderProfile(r.profile).icon}</span>
+        <span><strong>${escapeHtml(r.name)}</strong><small>${escapeHtml(hikeResultMeta(r))}</small></span>
+      </button>`).join('');
+  }
+
+  function drawFinderResultsOnMap(fit = false) {
+    if (state.hikeFinder.resultLayer) state.map.removeLayer(state.hikeFinder.resultLayer);
+    state.hikeFinder.mapLines = [];
+    const layers = [];
+    state.hikeFinder.results.forEach((result, index) => {
+      const lines = (result.segments || []).map(seg => seg.map(p => [p.lat, p.lon]));
+      if (!lines.length) return;
+      const selected = index === state.hikeFinder.selectedIndex;
+      const line = L.polyline(lines, {
+        color: selected ? '#0f8a67' : '#52677a',
+        weight: selected ? 6 : 4,
+        opacity: selected ? .96 : .58,
+        lineCap: 'round', lineJoin: 'round'
+      });
+      line.bindTooltip(result.name, { sticky: true, direction: 'top' });
+      line.on('click', ev => {
+        if (ev?.originalEvent) L.DomEvent.stopPropagation(ev.originalEvent);
+        selectFinderResult(index, true);
+      });
+      state.hikeFinder.mapLines[index] = line;
+      layers.push(line);
+    });
+    state.hikeFinder.resultLayer = L.featureGroup(layers).addTo(state.map);
+    if (fit && layers.length) {
+      const bounds = state.hikeFinder.resultLayer.getBounds();
+      if (bounds.isValid()) state.map.fitBounds(bounds, { paddingTopLeft: [24, 80], paddingBottomRight: [24, 220], maxZoom: 14 });
+    }
+  }
+
+  function refreshFinderLineStyles() {
+    state.hikeFinder.mapLines.forEach((line, index) => {
+      if (!line) return;
+      const selected = index === state.hikeFinder.selectedIndex;
+      line.setStyle({ color: selected ? '#0f8a67' : '#52677a', weight: selected ? 6 : 4, opacity: selected ? .96 : .48 });
+      if (selected) line.bringToFront();
+    });
+  }
+
+  function selectFinderResult(index, focusMap = false) {
+    const result = state.hikeFinder.results[index];
+    if (!result) return;
+    state.hikeFinder.selectedIndex = index;
+    refreshFinderLineStyles();
+    renderHikeFinderResults();
+    renderHikeFinderMapResults();
+    requestAnimationFrame(() => {
+      ui.hikeFinderMapResults?.querySelector('.hike-map-result.selected')?.scrollIntoView({ block: 'nearest' });
+      ui.hikeFinderResultsList?.querySelector('.hike-result-item.selected')?.scrollIntoView({ block: 'nearest' });
+    });
+    if (focusMap) {
+      const line = state.hikeFinder.mapLines[index];
+      if (line) {
+        const bounds = line.getBounds();
+        if (bounds.isValid()) state.map.fitBounds(bounds, { paddingTopLeft: [24, 80], paddingBottomRight: [24, 220], maxZoom: 15 });
+      }
+    }
   }
 
   function stitchHikeSegments(segments) {
@@ -920,7 +1122,7 @@
 
   function parseHikeGpxGeometry(text) {
     const xml = new DOMParser().parseFromString(text, 'application/xml');
-    if (xml.querySelector('parsererror')) throw new Error('GPX de la randonnée illisible');
+    if (xml.querySelector('parsererror')) throw new Error('GPX du parcours illisible');
     let segments = [...xml.querySelectorAll('trkseg')].map(seg => [...seg.querySelectorAll('trkpt')].map(n => ({
       lat: Number(n.getAttribute('lat')),
       lon: Number(n.getAttribute('lon')),
@@ -955,20 +1157,12 @@
   }
 
   async function fetchOverpassHikeGeometry(result) {
-    const query = `[out:json][timeout:30];relation(${result.id});out geom qt;`;
+    const query = `[out:json][timeout:30];relation(${result.id})->.r;(.r;way(r.r););out body geom qt;`;
     const data = await fetchOverpass(query, 35000);
+    const wayMap = new Map((data.elements || []).filter(el => el.type === 'way').map(w => [Number(w.id), w]));
     const rel = (data.elements || []).find(el => el.type === 'relation' && Number(el.id) === Number(result.id));
-    let segments = rel ? relationSegmentsFromElement(rel) : [];
-    if (!segments.length) {
-      const wayQuery = `[out:json][timeout:30];relation(${result.id})->.r;way(r.r);out geom qt;`;
-      const wayData = await fetchOverpass(wayQuery, 35000);
-      segments = (wayData.elements || [])
-        .filter(el => el.type === 'way' && Array.isArray(el.geometry) && el.geometry.length > 1)
-        .map(el => el.geometry.map(g => ({ lat: Number(g.lat), lon: Number(g.lon), ele: null }))
-          .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon)))
-        .filter(seg => seg.length > 1);
-    }
-    if (!segments.length) throw new Error('Cette randonnée ne fournit pas de tracé exploitable');
+    const segments = rel ? relationSegmentsFromElement(rel, wayMap) : [];
+    if (!segments.length) throw new Error('Ce parcours ne fournit pas de tracé exploitable');
     const points = stitchHikeSegments(segments);
     if (points.length < 2) throw new Error('Impossible de reconstruire le tracé');
     return { segments, points };
@@ -977,32 +1171,43 @@
   async function ensureHikeGeometry(result) {
     if (result.points?.length > 1 && result.segments?.length) return result;
     if (result.geometryPromise) return result.geometryPromise;
-
     result.geometryPromise = (async () => {
       let geometry = null;
-      try {
-        geometry = await fetchWaymarkedHikeGeometry(result);
-      } catch (_) {
+      if ((result.profile || 'hike') === 'hike') {
+        try { geometry = await fetchWaymarkedHikeGeometry(result); } catch (_) { geometry = await fetchOverpassHikeGeometry(result); }
+      } else {
         geometry = await fetchOverpassHikeGeometry(result);
       }
       result.segments = geometry.segments;
       result.points = geometry.points;
-      result.distanceKm = geometry.segments.reduce((sum, seg) => sum + routeDistance(seg), 0);
+      result.distanceKm = routeDistance(result.points);
       renderHikeFinderResults();
+      renderHikeFinderMapResults();
       return result;
     })();
-
-    try {
-      return await result.geometryPromise;
-    } finally {
-      result.geometryPromise = null;
-    }
+    try { return await result.geometryPromise; }
+    finally { result.geometryPromise = null; }
   }
 
   function drawHikePreview(result) {
+    // La recherche affiche déjà tous les tracés. On réouvre la vue carte + liste,
+    // puis on sélectionne celui-ci et on zoome dessus.
+    const index = state.hikeFinder.results.indexOf(result);
+    if (index >= 0) {
+      state.hikeFinder.active = true;
+      ui.hikeFinderPanel.classList.remove('hidden');
+      renderHikeFinderMapResults();
+      showAppScreen('map', { scroll: false });
+      setTimeout(() => {
+        enterMapFullscreen();
+        if (!state.hikeFinder.resultLayer || !state.hikeFinder.mapLines.length) drawFinderResultsOnMap(false);
+        selectFinderResult(index, true);
+      }, 70);
+      return;
+    }
     if (state.hikeFinder.previewLayer) state.map.removeLayer(state.hikeFinder.previewLayer);
     const lines = (result.segments || []).map(seg => seg.map(p => [p.lat, p.lon]));
-    state.hikeFinder.previewLayer = L.polyline(lines, { color: '#7c3aed', weight: 5, opacity: .88 }).addTo(state.map);
+    state.hikeFinder.previewLayer = L.polyline(lines, { color: '#0f8a67', weight: 6, opacity: .92 }).addTo(state.map);
     showAppScreen('map', { scroll: false });
     setTimeout(() => {
       enterMapFullscreen();
@@ -1016,9 +1221,12 @@
     if (addRelief) {
       try { points = await addElevations(points); } catch (_) { /* le tracé reste utilisable sans relief */ }
     }
+    const profileKey = result.profile || state.hikeFinder.profile || 'hike';
+    const finderProfile = getFinderProfile(profileKey);
     return buildRouteObject(result.name, points, {
-      source: 'osm-hiking',
-      transportMode: 'hike',
+      source: `osm-${profileKey}`,
+      transportMode: finderProfile.transportMode,
+      plannerProfile: profileKey,
       osmRelationId: result.id,
       osmRef: result.ref || '',
       osmNetwork: result.network || ''
@@ -1026,18 +1234,25 @@
   }
 
   async function handleHikeResultAction(e) {
+    const selectBtn = e.target.closest('[data-hike-select]');
+    if (selectBtn) {
+      const index = Number(selectBtn.dataset.hikeSelect);
+      selectFinderResult(index, false);
+      return;
+    }
     const btn = e.target.closest('button[data-hike-action]');
     const row = e.target.closest('[data-hike-index]');
     if (!btn || !row) return;
-    const result = state.hikeFinder.results[Number(row.dataset.hikeIndex)];
+    const index = Number(row.dataset.hikeIndex);
+    const result = state.hikeFinder.results[index];
     if (!result) return;
+    selectFinderResult(index, false);
     const oldText = btn.textContent;
     btn.disabled = true;
     btn.textContent = btn.dataset.hikeAction === 'show' ? '…' : 'Chargement…';
     try {
       await ensureHikeGeometry(result);
       if (btn.dataset.hikeAction === 'show') {
-        stopHikeFinder(false);
         drawHikePreview(result);
       } else {
         const route = await makeRouteFromHike(result, true);
@@ -1047,17 +1262,16 @@
           toast(`« ${route.name} » ajouté à Mes parcours.`);
         } else if (btn.dataset.hikeAction === 'load') {
           state.route = route;
+          stopHikeFinder(true);
+          applyRouteTransportMode(route);
           drawRoute(false);
           renderRouteStats();
           showAppScreen('routes');
-          toast(`Randonnée chargée : ${route.distanceKm.toFixed(1).replace('.', ',')} km.`);
+          toast(`Parcours chargé : ${route.distanceKm.toFixed(1).replace('.', ',')} km.`);
         }
       }
     } catch (err) {
-      const message = err?.name === 'AbortError'
-        ? 'Le service de tracé est trop lent. Réessaie dans quelques secondes.'
-        : (err.message || 'Impossible de charger cette randonnée.');
-      toast(message);
+      toast(err?.message || 'Impossible de charger ce parcours.');
     } finally {
       btn.disabled = false;
       btn.textContent = oldText;
@@ -1232,7 +1446,7 @@
       // Secours : ancien routeur OSM. Pour les vélos, ce repli est générique
       // et ne peut pas distinguer Route / Gravel / VTT.
       try {
-        const prefix = profile.activityMode === 'bike' ? 'routed-bike' : 'routed-foot';
+        const prefix = profile.activityMode === 'hike' ? 'routed-foot' : 'routed-bike';
         const coords = state.planner.waypoints.map(p => `${p.lon.toFixed(6)},${p.lat.toFixed(6)}`).join(';');
         const url = `https://routing.openstreetmap.de/${prefix}/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=false&alternatives=false`;
         const res = await fetch(url, { cache: 'no-store' });
@@ -1278,7 +1492,7 @@
       const defaultName = `${profile.label} ${new Date().toLocaleDateString('fr-FR')}`;
       const entered = window.prompt('Nom du parcours', defaultName);
       const name = (entered || defaultName).trim().slice(0, 80) || defaultName;
-      const route = buildRouteObject(name, pts, { source: 'planner', plannerProfile: state.planner.mode, transportMode: profile.activityMode });
+      const route = buildRouteObject(name, pts, { source: 'planner', plannerProfile: state.planner.mode, transportMode: profile.activityMode === 'hike' ? 'hike' : 'bike' });
       saveRouteLocal(route);
       state.route = route;
       drawRoute(false);
@@ -1289,7 +1503,7 @@
     } catch (err) {
       toast('Le parcours est créé, mais le relief n’a pas pu être récupéré.');
       const profile = getPlannerProfile();
-      const route = buildRouteObject(`${profile.label} ${new Date().toLocaleDateString('fr-FR')}`, downsamplePreserve(state.planner.routePoints, 600), { source: 'planner', plannerProfile: state.planner.mode, transportMode: profile.activityMode });
+      const route = buildRouteObject(`${profile.label} ${new Date().toLocaleDateString('fr-FR')}`, downsamplePreserve(state.planner.routePoints, 600), { source: 'planner', plannerProfile: state.planner.mode, transportMode: profile.activityMode === 'hike' ? 'hike' : 'bike' });
       saveRouteLocal(route);
       state.route = route;
       drawRoute(false);
@@ -1977,13 +2191,42 @@
       exitMapFullscreen();
       showAppScreen('routes');
     });
+    document.querySelectorAll('[data-hike-profile]').forEach(btn => btn.addEventListener('click', () => {
+      const profile = btn.dataset.hikeProfile;
+      if (!FINDER_PROFILES[profile]) return;
+      if (state.hikeFinder.loading) {
+        state.hikeFinder.requestSerial++;
+        state.hikeFinder.loading = false;
+      }
+      state.hikeFinder.profile = profile;
+      state.hikeFinder.results = [];
+      state.hikeFinder.selectedIndex = -1;
+      document.querySelectorAll('[data-hike-profile]').forEach(b => b.classList.toggle('active', b === btn));
+      if (state.hikeFinder.resultLayer) state.map.removeLayer(state.hikeFinder.resultLayer);
+      state.hikeFinder.resultLayer = null;
+      state.hikeFinder.mapLines = [];
+      renderHikeFinderResults();
+      renderHikeFinderMapResults();
+      const fp = getFinderProfile(profile);
+      ui.hikeFinderStatus.textContent = `${fp.icon} ${fp.label} · touchez la carte ou utilisez Ma position.`;
+      if (state.hikeFinder.center) searchHikesAround(state.hikeFinder.center);
+    }));
     document.querySelectorAll('[data-hike-radius]').forEach(btn => btn.addEventListener('click', () => {
       const radius = Number(btn.dataset.hikeRadius);
       if (![2,5,10,20].includes(radius)) return;
+      if (state.hikeFinder.loading) {
+        state.hikeFinder.requestSerial++;
+        state.hikeFinder.loading = false;
+      }
       state.hikeFinder.radiusKm = radius;
       document.querySelectorAll('[data-hike-radius]').forEach(b => b.classList.toggle('active', b === btn));
       if (state.hikeFinder.center) searchHikesAround(state.hikeFinder.center);
     }));
+    ui.hikeFinderMapResults?.addEventListener('click', e => {
+      const btn = e.target.closest('[data-hike-map-index]');
+      if (!btn) return;
+      selectFinderResult(Number(btn.dataset.hikeMapIndex), true);
+    });
     ui.hikeFinderResultsList?.addEventListener('click', handleHikeResultAction);
     ui.plannerGpsBtn.addEventListener('click', useGpsAsPlannerStart);
     ui.plannerUndoBtn.addEventListener('click', undoPlannerWaypoint);
@@ -2056,7 +2299,7 @@
   }
 
   function registerSW() {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.6.1', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.8.0', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
   }
 
   initMap();

@@ -1,4 +1,4 @@
-Rando Radar v1.7.1
+Rando Radar v1.8.0
 
 Rando Radar V1.4.2
 
@@ -30,3 +30,6 @@ V1.6.0 — profils du planificateur
 - VTT : Valhalla bicycle_type Mountain.
 - Repli automatique vers le routeur OSM générique si Valhalla est indisponible.
 - Le profil choisi est mémorisé avec les parcours créés localement.
+
+
+V1.8.0 : Parcours autour avec 4 profils (rando, vélo route, gravel, VTT), tracés affichés directement sur la carte et liste synchronisée.

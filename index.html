@@ -12,7 +12,7 @@
 <link href="icon-192.png" rel="apple-touch-icon"/>
 <link crossorigin="" href="https://unpkg.com" rel="preconnect"/>
 <link crossorigin="" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" rel="stylesheet"/>
-<link href="styles.css?v=1.7.1" rel="stylesheet"/>
+<link href="styles.css?v=1.8.0" rel="stylesheet"/>
 </head>
 <body>
 <div id="app">
@@ -83,10 +83,16 @@
 <div class="hike-finder-panel hidden" id="hikeFinderPanel">
 <div class="hike-finder-head">
 <div>
-<strong>🥾 Randonnées autour</strong>
-<small id="hikeFinderStatus">Touchez la carte pour choisir le centre de recherche.</small>
+<strong>🧭 Parcours autour</strong>
+<small id="hikeFinderStatus">Choisis une activité puis touche la carte.</small>
 </div>
 <button aria-label="Fermer la recherche" class="hike-finder-close" id="hikeFinderCloseBtn" type="button">✕</button>
+</div>
+<div class="hike-finder-profiles" aria-label="Type de parcours">
+<button class="hike-profile-btn active" data-hike-profile="hike" type="button"><span>🥾</span><small>Rando</small></button>
+<button class="hike-profile-btn" data-hike-profile="road" type="button"><span>🚴</span><small>Route</small></button>
+<button class="hike-profile-btn" data-hike-profile="gravel" type="button"><span>🚲</span><small>Gravel</small></button>
+<button class="hike-profile-btn" data-hike-profile="mtb" type="button"><span>🚵</span><small>VTT</small></button>
 </div>
 <div class="hike-finder-radius" aria-label="Rayon de recherche">
 <button class="hike-radius-btn" data-hike-radius="2" type="button">2 km</button>
@@ -98,7 +104,8 @@
 <button id="hikeFinderGpsBtn" type="button">📍 Ma position</button>
 <button class="hidden" id="hikeFinderListBtn" type="button">📋 Voir la liste</button>
 </div>
-<div class="hike-finder-note">Recherche les itinéraires de randonnée renseignés dans OpenStreetMap autour du point choisi.</div>
+<div class="hike-finder-note">Les tracés trouvés sont affichés directement sur la carte et dans la liste. Route filtre fortement les chemins non revêtus ; Gravel accepte les pistes roulantes ; VTT privilégie les parcours tout-terrain.</div>
+<div class="hike-finder-map-results" id="hikeFinderMapResults"></div>
 </div>
 <div class="planner-panel hidden" id="plannerPanel">
 <div class="planner-head">
@@ -198,14 +205,14 @@
 </button>
 <button class="route-tool-button route-tool-find" id="routesFindHikesBtn" type="button">
 <span class="route-tool-icon">🥾</span>
-<span><strong>Randonnées autour</strong><small>Choisir un point sur la carte</small></span>
+<span><strong>Parcours autour</strong><small>Rando, route, gravel ou VTT</small></span>
 </button>
 </div>
 </section><section class="route-card hidden" id="hikeFinderResultsCard">
 <div class="section-head">
 <div>
 <div class="label">OpenStreetMap</div>
-<h2>Randonnées trouvées</h2>
+<h2>Parcours trouvés</h2>
 <div class="hike-results-summary" id="hikeFinderResultsSummary"></div>
 </div>
 <button class="text-btn" id="hikeFinderNewSearchBtn" type="button">Nouvelle recherche</button>
@@ -272,9 +279,9 @@
 </div>
 </section></div></section><section aria-label="Infos" class="app-screen" data-screen="info"><div class="screen-heading"><h2>Infos</h2><p>Sources de données et version de Rando Radar.</p></div><div class="screen-content"><section class="info-card" id="infoSection">
 <strong>À propos des données</strong>
-<p>Météo et altitude : Open‑Meteo / modèles Météo‑France AROME &amp; ARPEGE / Copernicus DEM. Radar : RainViewer. Cartographie : OpenTopoMap et OpenStreetMap. Routage : OpenStreetMap/FOSSGIS OSRM et Valhalla selon le profil. Randonnées autour : itinéraires OpenStreetMap via Overpass API.</p>
+<p>Météo et altitude : Open‑Meteo / modèles Météo‑France AROME &amp; ARPEGE / Copernicus DEM. Radar : RainViewer. Cartographie : OpenTopoMap et OpenStreetMap. Routage : OpenStreetMap/FOSSGIS OSRM et Valhalla selon le profil. Parcours autour : itinéraires OpenStreetMap via Overpass API, filtrés selon le profil choisi.</p>
 <p class="tiny">Le radar affiche des observations passées, pas une prévision radar future. En montagne, vérifie aussi les vigilances et les conditions réelles avant de partir.</p>
-<p class="tiny app-version">Version chargée : <strong>1.7.1</strong></p>
+<p class="tiny app-version">Version chargée : <strong>1.8.0</strong></p>
 </section></div></section></main>
 <nav aria-label="Navigation principale" class="bottom-nav">
 <button class="bottom-nav-btn active" data-nav="map" type="button"><span>🗺️</span><small>Carte</small></button>
@@ -299,6 +306,6 @@
 </div>
 </div>
 <script crossorigin="" src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="app.js?v=1.7.1"></script>
+<script src="app.js?v=1.8.0"></script>
 </body>
 </html>

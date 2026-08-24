@@ -66,7 +66,7 @@
     tempNow: $('tempNow'), rainNow: $('rainNow'), gustNow: $('gustNow'), feelNow: $('feelNow'), elevationNow: $('elevationNow'), weatherIcon: $('weatherIcon'),
     alertCard: $('alertCard'), alertIcon: $('alertIcon'), alertTitle: $('alertTitle'), alertText: $('alertText'),
     gpxInput: $('gpxInput'), analyzeBtn: $('analyzeBtn'), routeCard: $('routeCard'), routeName: $('routeName'), routeDistance: $('routeDistance'), routeGain: $('routeGain'), routeLoss: $('routeLoss'), routeHigh: $('routeHigh'), routeForecast: $('routeForecast'), clearRouteBtn: $('clearRouteBtn'), exportRouteBtn: $('exportRouteBtn'),
-    hourlyForecast: $('hourlyForecast'), refreshWeatherBtn: $('refreshWeatherBtn'), toast: $('toast'),
+    hourlyForecast: $('hourlyForecast'), refreshWeatherBtn: $('refreshWeatherBtn'), refreshWeatherIcon: $('refreshWeatherIcon'), refreshWeatherLabel: $('refreshWeatherLabel'), weatherUpdatedAt: $('weatherUpdatedAt'), toast: $('toast'),
     createRouteBtn: $('createRouteBtn'), plannerPanel: $('plannerPanel'), plannerStatus: $('plannerStatus'), plannerGpsBtn: $('plannerGpsBtn'), plannerUndoBtn: $('plannerUndoBtn'), plannerClearBtn: $('plannerClearBtn'), plannerSaveBtn: $('plannerSaveBtn'),
     savedRoutesCard: $('savedRoutesCard'), savedRoutesList: $('savedRoutesList'),
     activityOpenBtn: $('activityOpenBtn'), activityCard: $('activityCard'), activityTitle: $('activityTitle'), activityCloseCardBtn: $('activityCloseCardBtn'), activityStartBtn: $('activityStartBtn'), activityExportBtn: $('activityExportBtn'), activityStats: $('activityStats'), activityDistance: $('activityDistance'), activityTime: $('activityTime'), activitySpeed: $('activitySpeed'), activityAvgSpeed: $('activityAvgSpeed'), activityHelp: $('activityHelp'),
@@ -285,10 +285,9 @@
       renderCurrentWeather(data);
       renderHourly(data);
       if (data.elevation != null) ui.elevationNow.textContent = `${Math.round(data.elevation)} m`;
-      if (!silent) {
-        const t = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-        toast(`Météo actualisée à ${t}.`);
-      }
+      const t = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+      if (ui.weatherUpdatedAt) ui.weatherUpdatedAt.textContent = `Dernière mise à jour : ${t}`;
+      if (!silent) toast(`Météo actualisée à ${t}.`);
       return true;
     } catch (err) {
       if (!silent) toast('Impossible de récupérer la météo locale.');
@@ -298,10 +297,13 @@
 
   async function refreshWeatherNow() {
     if (ui.refreshWeatherBtn.disabled) return;
-    const previousLabel = ui.refreshWeatherBtn.textContent;
+
+    // Retour visuel immédiat : la flèche tourne pendant TOUTE l'opération,
+    // y compris pendant l'obtention éventuelle d'une position GPS fraîche.
     ui.refreshWeatherBtn.disabled = true;
-    ui.refreshWeatherBtn.textContent = 'Actualisation…';
+    ui.refreshWeatherBtn.classList.add('refreshing');
     ui.refreshWeatherBtn.setAttribute('aria-busy', 'true');
+    if (ui.refreshWeatherLabel) ui.refreshWeatherLabel.textContent = 'Actualisation…';
 
     try {
       let lat = state.location?.lat;
@@ -334,8 +336,9 @@
       await loadWeather(lat, lon);
     } finally {
       ui.refreshWeatherBtn.disabled = false;
-      ui.refreshWeatherBtn.textContent = previousLabel || 'Actualiser';
+      ui.refreshWeatherBtn.classList.remove('refreshing');
       ui.refreshWeatherBtn.removeAttribute('aria-busy');
+      if (ui.refreshWeatherLabel) ui.refreshWeatherLabel.textContent = 'Actualiser';
     }
   }
 

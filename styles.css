@@ -790,3 +790,54 @@ html, body {
   opacity: .72;
   cursor: wait;
 }
+
+
+/* =========================================================
+   V1.4.5 — Retour visuel de l'actualisation météo
+   ========================================================= */
+.weather-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+.refresh-weather-icon {
+  display: inline-block;
+  font-size: 17px;
+  line-height: 1;
+  transform-origin: 50% 50%;
+}
+.weather-refresh-btn.refreshing .refresh-weather-icon {
+  animation: weather-refresh-spin .8s linear infinite;
+}
+.weather-refresh-btn.refreshing {
+  opacity: 1;
+  cursor: wait;
+}
+.weather-refresh-btn:disabled {
+  opacity: .82;
+}
+.weather-updated {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+@keyframes weather-refresh-spin {
+  to { transform: rotate(360deg); }
+}
+@media (max-width: 900px) {
+  .weather-refresh-btn {
+    min-width: 112px;
+  }
+  .weather-updated {
+    font-size: clamp(10px, 1.7vw, 12px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .weather-refresh-btn.refreshing .refresh-weather-icon {
+    animation-duration: 1.5s;
+  }
+}

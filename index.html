@@ -231,8 +231,12 @@
             <div>
               <div class="label">Prévision locale</div>
               <h2>Prochaines heures</h2>
+              <div id="weatherUpdatedAt" class="weather-updated">Dernière mise à jour : --:--</div>
             </div>
-            <button id="refreshWeatherBtn" class="text-btn">Actualiser</button>
+            <button id="refreshWeatherBtn" class="text-btn weather-refresh-btn" type="button" aria-live="polite">
+              <span id="refreshWeatherIcon" class="refresh-weather-icon" aria-hidden="true">↻</span>
+              <span id="refreshWeatherLabel">Actualiser</span>
+            </button>
           </div>
           <div id="hourlyForecast" class="hourly-scroll">
             <div class="skeleton">Active le GPS pour afficher la météo.</div>

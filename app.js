@@ -1,4 +1,4 @@
-/* Rando Radar v1.10.13 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
+/* Rando Radar v1.10.15 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
 (() => {
   'use strict';
 
@@ -2911,8 +2911,22 @@
     return Math.max(0, end - state.activity.startedAt - state.activity.pausedMs - currentPause);
   }
 
+  function syncActivityModeButtons() {
+    const mode = ACTIVITY_PROFILES[state.activity.mode] ? state.activity.mode : 'hike';
+    const locked = ['recording','paused'].includes(state.activity.status);
+    document.querySelectorAll('[data-activity-mode]').forEach(btn => {
+      const active = btn.dataset.activityMode === mode;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+      btn.classList.toggle('activity-mode-locked', locked && !active);
+    });
+  }
+
   function updateActivityUI() {
     const a = state.activity;
+    // Toujours resynchroniser le sélecteur visuel avec l'état réel.
+    // Important après restauration d'une activité (pull-to-refresh/rechargement).
+    syncActivityModeButtons();
     if (a.status === 'idle') {
       ui.activityTitle.textContent = 'Nouvelle activité';
       ui.activityStartBtn.textContent = '▶ Démarrer';
@@ -3301,10 +3315,21 @@
   const APP_SCREEN_NAMES = new Set(['map','activity','routes','weather','info']);
   let currentAppScreen = 'map';
 
+  // V1.10.15 : le pull-to-refresh Android/Chrome est autorisé uniquement
+  // sur l'écran Infos (où la version chargée est visible).
+  function updatePullToRefreshPolicy(screenName) {
+    const allow = screenName === 'info';
+    document.documentElement.classList.toggle('pull-refresh-allowed', allow);
+    document.body.classList.toggle('pull-refresh-allowed', allow);
+    document.documentElement.classList.toggle('pull-refresh-locked', !allow);
+    document.body.classList.toggle('pull-refresh-locked', !allow);
+  }
+
   function showAppScreen(name, options = {}) {
     if (!APP_SCREEN_NAMES.has(name)) name = 'map';
     const { scroll = true } = options;
     currentAppScreen = name;
+    updatePullToRefreshPolicy(name);
 
     document.querySelectorAll('.app-screen[data-screen]').forEach(screen => {
       const active = screen.dataset.screen === name;
@@ -4067,7 +4092,7 @@
   }
 
   function registerSW() {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.13', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.15', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
   }
 
   initMap();

@@ -1505,3 +1505,18 @@ body.activity-choice-open{overflow:hidden}
   }
   .activity-map-panel.collapsed{max-height:118px}
 }
+
+
+/* =========================================================
+   V1.10.15 — Pull-to-refresh autorisé uniquement dans Infos
+   Le défilement vertical normal reste disponible partout.
+   ========================================================= */
+html.pull-refresh-locked,
+body.pull-refresh-locked {
+  overscroll-behavior-y: none;
+}
+
+html.pull-refresh-allowed,
+body.pull-refresh-allowed {
+  overscroll-behavior-y: auto;
+}

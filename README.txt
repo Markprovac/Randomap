@@ -45,3 +45,7 @@ V1.10.11 : retour au comportement de validation Vélo route de la V1.10.6 (contr
 V1.10.13 : panneau de suivi d'activité déplacé en bas de la carte et repliable. Mode compact par défaut avec activité/distance/temps/vitesse ; tap sur le panneau pour agrandir, chevron pour réduire. Le panneau radar est masqué pendant le suivi plein écran afin de ne pas chevaucher le bottom sheet.
 
 V1.10.13 : persistance automatique de l’activité en cours. Un pull-to-refresh/rechargement restaure le chrono, la trace, le type d’activité, le GPX suivi, la progression et la destination, puis relance le GPS.
+
+V1.10.14 : correction de la restauration du type d’activité. Après rechargement/pull-to-refresh, le sélecteur Randonnée / Vélo route / Gravel / VTT se resynchronise avec le mode réellement enregistré, y compris pendant une activité restaurée.
+
+V1.10.15 : blocage du geste pull-to-refresh sur Carte, Activité, Parcours et Météo. Le rechargement par tirage vers le bas reste autorisé uniquement sur l’écran Infos où la version chargée est visible. Le bouton Actualiser du navigateur reste hors du contrôle de la PWA.

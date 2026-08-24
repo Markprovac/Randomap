@@ -633,3 +633,154 @@ main,
     overflow-wrap: anywhere;
   }
 }
+
+
+/* =========================================================
+   V1.4.3 — Correctif robuste anti-décalage mobile
+   - suppression des largeurs basées sur vw/dvw qui peuvent bouger
+   - quick actions et cartes forcées à rester DANS l'écran
+   - aucun composant ne peut pousser la page vers la droite
+   ========================================================= */
+
+html, body {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden !important;
+}
+
+#app, main {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden !important;
+}
+
+.map-wrap,
+.dashboard,
+.quick-actions,
+.overview-grid,
+.route-card,
+.forecast-card,
+.info-card,
+.overview-card,
+.alert-card,
+.saved-routes-list,
+#hourlyForecast {
+  inline-size: 100%;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+}
+
+/* Sur mobile, on évite les largeurs en vw/dvw qui changent quand
+   la barre système Android apparaît/disparaît. */
+@media (max-width: 900px) {
+  .map-wrap {
+    width: auto !important;
+    max-width: none !important;
+    inline-size: auto !important;
+    block-size: clamp(360px, 42dvh, 560px);
+    margin: 10px 10px 0 !important;
+  }
+
+  .dashboard {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    padding: 10px;
+  }
+
+  .dashboard > * + * {
+    margin-top: 10px;
+  }
+
+  /* Actions principales : 2 colonnes stables et compactes. */
+  .quick-actions {
+    display: flex !important;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .quick-actions > * {
+    flex: 1 1 calc(50% - 4px);
+    max-width: calc(50% - 4px);
+    min-width: 0;
+  }
+  .quick-button {
+    width: 100%;
+    min-height: 72px;
+    padding: 8px 10px;
+    gap: 8px;
+  }
+
+  /* Cartes d'aperçu : météo plein écran, les deux autres sur 2 colonnes. */
+  .overview-grid {
+    display: flex !important;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .overview-grid > * {
+    min-width: 0;
+  }
+  .weather-overview {
+    flex: 1 1 100%;
+    max-width: 100%;
+  }
+  .activity-preview,
+  .route-preview {
+    flex: 1 1 calc(50% - 4px);
+    max-width: calc(50% - 4px);
+  }
+
+  .section-head,
+  .metric-line,
+  .saved-route-item {
+    min-width: 0;
+  }
+
+  .section-head > *,
+  .metric-line > *,
+  .saved-route-item > * {
+    min-width: 0;
+  }
+
+  .metric-line strong,
+  .section-head h2,
+  .saved-route-item .saved-meta,
+  .overview-copy,
+  .quick-button > span:last-child {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+}
+
+@media (max-width: 430px) {
+  .map-wrap {
+    margin: 8px 8px 0 !important;
+    block-size: clamp(340px, 43dvh, 470px);
+  }
+
+  .dashboard {
+    padding: 8px;
+  }
+
+  .quick-actions > * {
+    flex-basis: calc(50% - 3.5px);
+    max-width: calc(50% - 3.5px);
+  }
+
+  .quick-button {
+    min-height: 68px;
+    font-size: 13px;
+  }
+
+  .activity-preview,
+  .route-preview {
+    flex-basis: 100%;
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 340px) {
+  .quick-actions > * {
+    flex-basis: 100%;
+    max-width: 100%;
+  }
+}

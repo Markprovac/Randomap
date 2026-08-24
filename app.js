@@ -268,7 +268,7 @@
     }, 600);
   }
 
-  async function loadWeather(lat, lon) {
+  async function loadWeather(lat, lon, { silent = false } = {}) {
     try {
       const params = new URLSearchParams({
         latitude: lat,
@@ -278,15 +278,64 @@
         forecast_days: '2',
         timezone: 'auto'
       });
-      const res = await fetch(`https://api.open-meteo.com/v1/meteofrance?${params}`);
+      const res = await fetch(`https://api.open-meteo.com/v1/meteofrance?${params}`, { cache: 'no-store' });
       if (!res.ok) throw new Error('Météo indisponible');
       const data = await res.json();
       state.lastWeather = data;
       renderCurrentWeather(data);
       renderHourly(data);
       if (data.elevation != null) ui.elevationNow.textContent = `${Math.round(data.elevation)} m`;
+      if (!silent) {
+        const t = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+        toast(`Météo actualisée à ${t}.`);
+      }
+      return true;
     } catch (err) {
-      toast('Impossible de récupérer la météo locale.');
+      if (!silent) toast('Impossible de récupérer la météo locale.');
+      return false;
+    }
+  }
+
+  async function refreshWeatherNow() {
+    if (ui.refreshWeatherBtn.disabled) return;
+    const previousLabel = ui.refreshWeatherBtn.textContent;
+    ui.refreshWeatherBtn.disabled = true;
+    ui.refreshWeatherBtn.textContent = 'Actualisation…';
+    ui.refreshWeatherBtn.setAttribute('aria-busy', 'true');
+
+    try {
+      let lat = state.location?.lat;
+      let lon = state.location?.lon;
+
+      // Au clic, demander une position fraîche plutôt que de réutiliser
+      // silencieusement une ancienne position du suivi GPS.
+      if ('geolocation' in navigator) {
+        try {
+          const pos = await new Promise((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(resolve, reject, {
+              enableHighAccuracy: true,
+              maximumAge: 0,
+              timeout: 10000
+            });
+          });
+          lat = pos.coords.latitude;
+          lon = pos.coords.longitude;
+        } catch (_) {
+          // Si un suivi GPS est déjà actif, la dernière position connue reste
+          // un repli valable. Sinon on affiche une erreur explicite ci-dessous.
+        }
+      }
+
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        toast('Position GPS indisponible pour actualiser la météo.');
+        return;
+      }
+
+      await loadWeather(lat, lon);
+    } finally {
+      ui.refreshWeatherBtn.disabled = false;
+      ui.refreshWeatherBtn.textContent = previousLabel || 'Actualiser';
+      ui.refreshWeatherBtn.removeAttribute('aria-busy');
     }
   }
 
@@ -1197,7 +1246,7 @@
     ui.clearRouteBtn.addEventListener('click', clearRoute);
     ui.exportRouteBtn.addEventListener('click', exportCurrentRoute);
     ui.analyzeBtn.addEventListener('click', analyzeRoute);
-    ui.refreshWeatherBtn.addEventListener('click', () => state.location ? loadWeather(state.location.lat, state.location.lon) : startLocation(false));
+    ui.refreshWeatherBtn.addEventListener('click', refreshWeatherNow);
 
     document.querySelectorAll('.mode-btn[data-mode]').forEach(btn => btn.addEventListener('click', () => {
       state.mode = btn.dataset.mode;

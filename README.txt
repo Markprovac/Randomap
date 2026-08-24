@@ -1,4 +1,4 @@
-Rando Radar V1.4.1
+Rando Radar V1.4.2
 
 Correction responsive smartphone :
 - largeur réelle 100 % sur smartphone ;
@@ -9,7 +9,10 @@ Correction responsive smartphone :
 - navigation basse lisible sans zoom ;
 - panneaux activité / planification agrandis ;
 - recalcul de la taille Leaflet lors d'un redimensionnement ou changement d'orientation ;
-- cache PWA v1.4.1.
+- cache PWA v1.4.2.
 
 Fonctions conservées : GPS, radar, météo, import/export GPX, création de parcours,
 suivi d'activité, destination et carte plein écran.
+
+
+V1.4.2 : correction du décalage horizontal apparaissant après le chargement des prévisions météo dynamiques.

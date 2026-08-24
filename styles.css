@@ -514,3 +514,122 @@ html, body {
   .quick-actions { grid-template-columns: 1fr; }
   .quick-button { min-height: 60px; }
 }
+
+/* =========================================================
+   V1.4.2 — Correctif anti-décalage après chargement dynamique
+   Les listes horizontales (météo, parcours, etc.) restent confinées
+   dans leur carte et ne peuvent plus élargir la grille principale.
+   ========================================================= */
+
+/* Une grille CSS utilise par défaut une largeur minimale basée sur son contenu.
+   Une liste météo horizontale peut donc agrandir la colonne après son rendu.
+   minmax(0,1fr) supprime cette largeur minimale intrinsèque. */
+.dashboard {
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.dashboard > *,
+.quick-actions,
+.overview-grid,
+.overview-card,
+.route-card,
+.forecast-card,
+.info-card,
+.saved-routes-list,
+.route-forecast,
+.hourly-scroll,
+.section-head,
+.mode-row,
+.segmented,
+.activity-main-actions,
+.activity-detail-stats,
+.stats-grid {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+/* Les contenus dynamiques défilent DANS leur composant, jamais sur la page. */
+.forecast-card,
+.route-card,
+.overview-card,
+.info-card {
+  overflow: hidden;
+}
+
+.hourly-scroll {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-inline: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.hour-card {
+  flex: 0 0 auto;
+}
+
+.route-forecast {
+  overflow-x: hidden;
+}
+
+.route-step {
+  min-width: 0;
+  max-width: 100%;
+}
+.route-step .desc,
+.route-step .meta,
+.saved-route-item > div:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.saved-route-item {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Aucun enfant injecté plus tard ne peut modifier la largeur de page. */
+#app,
+main,
+.dashboard {
+  overflow-x: clip;
+}
+
+@media (max-width: 900px) {
+  .dashboard {
+    grid-template-columns: minmax(0, 1fr) !important;
+    inline-size: 100%;
+    max-inline-size: 100%;
+  }
+
+  .quick-actions,
+  .overview-grid {
+    inline-size: 100%;
+    max-inline-size: 100%;
+  }
+
+  .quick-button {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .quick-button > span:last-child {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .metric-line {
+    min-width: 0;
+  }
+  .metric-line > span,
+  .metric-line > strong {
+    min-width: 0;
+  }
+  .metric-line > strong {
+    text-align: right;
+    overflow-wrap: anywhere;
+  }
+}

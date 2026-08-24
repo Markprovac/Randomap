@@ -1,4 +1,4 @@
-const CACHE = 'rando-radar-v1.4.1';
+const CACHE = 'rando-radar-v1.4.2';
 const APP_SHELL = ['./', './index.html', './styles.css', './app.js', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', event => {

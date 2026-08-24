@@ -1,4 +1,4 @@
-/* Rando Radar v1.10.9 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
+/* Rando Radar v1.10.7 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
 (() => {
   'use strict';
 
@@ -82,7 +82,6 @@
       requestSerial: 0,
       routing: false,
       routeValid: false,
-      verification: { status: 'none', overrideAllowed: false },
     },
     hikeFinder: {
       active: false,
@@ -136,7 +135,7 @@
     alertCard: $('alertCard'), alertIcon: $('alertIcon'), alertTitle: $('alertTitle'), alertText: $('alertText'),
     gpxInput: $('gpxInput'), analyzeBtn: $('analyzeBtn'), routeCard: $('routeCard'), routeName: $('routeName'), routeDistance: $('routeDistance'), routeGain: $('routeGain'), routeLoss: $('routeLoss'), routeHigh: $('routeHigh'), routeForecast: $('routeForecast'), clearRouteBtn: $('clearRouteBtn'), exportRouteBtn: $('exportRouteBtn'), routeStartBtn: $('routeStartBtn'), routeShowBtn: $('routeShowBtn'),
     hourlyForecast: $('hourlyForecast'), refreshWeatherBtn: $('refreshWeatherBtn'), refreshWeatherIcon: $('refreshWeatherIcon'), refreshWeatherLabel: $('refreshWeatherLabel'), weatherUpdatedAt: $('weatherUpdatedAt'), toast: $('toast'),
-    createRouteBtn: $('createRouteBtn'), plannerPanel: $('plannerPanel'), plannerStatus: $('plannerStatus'), plannerGpsBtn: $('plannerGpsBtn'), plannerUndoBtn: $('plannerUndoBtn'), plannerClearBtn: $('plannerClearBtn'), plannerSaveBtn: $('plannerSaveBtn'), plannerVerifyActions: $('plannerVerifyActions'), plannerVerifyRetryBtn: $('plannerVerifyRetryBtn'), plannerSaveUnverifiedBtn: $('plannerSaveUnverifiedBtn'),
+    createRouteBtn: $('createRouteBtn'), plannerPanel: $('plannerPanel'), plannerStatus: $('plannerStatus'), plannerGpsBtn: $('plannerGpsBtn'), plannerUndoBtn: $('plannerUndoBtn'), plannerClearBtn: $('plannerClearBtn'), plannerSaveBtn: $('plannerSaveBtn'),
     hikeFinderPanel: $('hikeFinderPanel'), hikeFinderStatus: $('hikeFinderStatus'), hikeFinderCloseBtn: $('hikeFinderCloseBtn'), hikeFinderGpsBtn: $('hikeFinderGpsBtn'), hikeFinderListBtn: $('hikeFinderListBtn'), hikeFinderMapResults: $('hikeFinderMapResults'), hikeFinderResultsCard: $('hikeFinderResultsCard'), hikeFinderResultsSummary: $('hikeFinderResultsSummary'), hikeFinderResultsList: $('hikeFinderResultsList'), hikeFinderNewSearchBtn: $('hikeFinderNewSearchBtn'), routesFindHikesBtn: $('routesFindHikesBtn'),
     finderMapDetail: $('finderMapDetail'), finderMapDetailType: $('finderMapDetailType'), finderMapDetailName: $('finderMapDetailName'), finderMapDetailBody: $('finderMapDetailBody'), finderMapDetailClose: $('finderMapDetailClose'),
     finderDetailCard: $('finderDetailCard'), finderDetailType: $('finderDetailType'), finderDetailName: $('finderDetailName'), finderDetailBody: $('finderDetailBody'), finderDetailClose: $('finderDetailClose'),
@@ -1883,42 +1882,6 @@
 
   // ---------- Planificateur type Komoot ----------
 
-  function setPlannerVerification(status = 'none', overrideAllowed = false) {
-    state.planner.verification = { status, overrideAllowed: !!overrideAllowed };
-    ui.plannerPanel?.classList.toggle('verification-unavailable', status === 'unavailable');
-    ui.plannerPanel?.classList.toggle('verification-incompatible', status === 'incompatible');
-    const show = status === 'unavailable' && !!overrideAllowed && state.planner.routePoints.length > 1;
-    ui.plannerVerifyActions?.classList.toggle('hidden', !show);
-    if (ui.plannerSaveUnverifiedBtn) ui.plannerSaveUnverifiedBtn.disabled = !show || state.planner.routing;
-    if (ui.plannerVerifyRetryBtn) ui.plannerVerifyRetryBtn.disabled = state.planner.routing;
-  }
-
-  function markRoadVerificationUnavailable(points, message) {
-    state.planner.routePoints = (points || []).map(p => ({ ...p }));
-    state.planner.routeValid = false;
-    if (state.planner.routePoints.length > 1) drawPlannerLine(state.planner.routePoints, true);
-    setPlannerVerification('unavailable', state.planner.routePoints.length > 1);
-    ui.plannerStatus.textContent = `🚴 ⚠ ${message} Tu peux réessayer ou enregistrer ce tracé à tes risques.`;
-    updatePlannerButtons();
-  }
-
-  function markRoadIncompatible(points, message) {
-    state.planner.routePoints = (points || []).map(p => ({ ...p }));
-    state.planner.routeValid = false;
-    if (state.planner.routePoints.length > 1) drawPlannerLine(state.planner.routePoints, true);
-    setPlannerVerification('incompatible', false);
-    ui.plannerStatus.textContent = `🚴 ⛔ ${message}`;
-    updatePlannerButtons();
-  }
-
-  function retryPlannerVerification() {
-    if (state.planner.routing || state.planner.waypoints.length < 2) return;
-    setPlannerVerification('none', false);
-    state.planner.lastRequestAt = 0;
-    ui.plannerStatus.textContent = '🚴 Nouvelle tentative de contrôle du parcours…';
-    schedulePlannerRoute();
-  }
-
   function startPlanner() {
     if (state.activity.status === 'recording') {
       toast('Mets d’abord l’activité en pause ou termine-la pour créer un parcours.');
@@ -1928,7 +1891,6 @@
     state.planner.waypoints = [];
     state.planner.routePoints = [];
     state.planner.routeValid = false;
-    setPlannerVerification('none', false);
     clearPlannerLayers();
     ui.plannerPanel.classList.remove('hidden');
     ui.mapWrap.classList.add('planning');
@@ -1941,7 +1903,6 @@
 
   function stopPlanner(clear = true) {
     state.planner.active = false;
-    setPlannerVerification('none', false);
     clearTimeout(state.planner.routeTimer);
     state.planner.routeTimer = null;
     ui.plannerPanel.classList.add('hidden');
@@ -1962,7 +1923,6 @@
 
   function addPlannerWaypoint(point) {
     state.planner.waypoints.push(point);
-    setPlannerVerification('none', false);
     renderPlannerMarkers();
     updatePlannerButtons();
     if (state.planner.waypoints.length === 1) {
@@ -1994,10 +1954,6 @@
     ui.plannerUndoBtn.disabled = n === 0;
     ui.plannerClearBtn.disabled = n === 0;
     ui.plannerSaveBtn.disabled = n < 2 || state.planner.routing || !state.planner.routeValid;
-    const canOverride = state.planner.verification?.status === 'unavailable' && state.planner.verification?.overrideAllowed && state.planner.routePoints.length > 1;
-    if (ui.plannerVerifyActions) ui.plannerVerifyActions.classList.toggle('hidden', !canOverride);
-    if (ui.plannerVerifyRetryBtn) ui.plannerVerifyRetryBtn.disabled = state.planner.routing;
-    if (ui.plannerSaveUnverifiedBtn) ui.plannerSaveUnverifiedBtn.disabled = state.planner.routing || !canOverride;
   }
 
   function undoPlannerWaypoint() {
@@ -2022,7 +1978,6 @@
   }
 
   function clearPlanner() {
-    setPlannerVerification('none', false);
     state.planner.waypoints = [];
     state.planner.routePoints = [];
     clearPlannerLayers();
@@ -2071,34 +2026,15 @@
     return null;
   }
 
-  async function routeWithOsrm(profile, serial, detailed = false) {
+  async function routeWithOsrm(profile, serial) {
     const prefix = profile.activityMode === 'hike' ? 'routed-foot' : 'routed-bike';
     const coords = state.planner.waypoints.map(p => `${p.lon.toFixed(6)},${p.lat.toFixed(6)}`).join(';');
-    const extra = detailed ? '&annotations=nodes,distance' : '';
-    const url = `https://routing.openstreetmap.de/${prefix}/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=false&alternatives=false${extra}`;
+    const url = `https://routing.openstreetmap.de/${prefix}/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=false&alternatives=false`;
     const data = await fetchPlannerJson(url, {}, 7000);
     if (serial !== state.planner.requestSerial) return null;
     const coordsOut = plannerCoordinatesFromResponse(data);
     if (!Array.isArray(coordsOut) || coordsOut.length < 2) throw new Error('Aucun chemin OSM trouvé');
-    if (!detailed) return coordsOut;
-
-    // OSRM peut fournir les identifiants des nœuds OSM réellement empruntés.
-    // On les utilise pour contrôler les VOIES exactes du parcours, au lieu de
-    // chercher simplement la route la plus proche d'un point (qui pouvait
-    // confondre un sentier avec une route parallèle située quelques mètres plus loin).
-    const edges = [];
-    for (const leg of (data?.routes?.[0]?.legs || [])) {
-      const nodes = Array.isArray(leg?.annotation?.nodes) ? leg.annotation.nodes.map(Number) : [];
-      const distances = Array.isArray(leg?.annotation?.distance) ? leg.annotation.distance.map(Number) : [];
-      const n = Math.min(distances.length, Math.max(0, nodes.length - 1));
-      for (let i = 0; i < n; i++) {
-        const a = nodes[i], b = nodes[i + 1], distance = distances[i];
-        if (Number.isFinite(a) && Number.isFinite(b) && a > 0 && b > 0) {
-          edges.push({ a, b, distance: Number.isFinite(distance) && distance > 0 ? distance : 1 });
-        }
-      }
-    }
-    return { coords: coordsOut, edges };
+    return coordsOut;
   }
 
   function pointSegmentDistanceMeters(p, a, b) {
@@ -2198,88 +2134,13 @@
     throw lastError || new Error('Contrôle surfaces indisponible');
   }
 
-  function osmPairKey(a, b) {
-    const x = Number(a), y = Number(b);
-    return x < y ? `${x}:${y}` : `${y}:${x}`;
-  }
-
-  async function inspectRoadOsrmEdges(edges, serial) {
-    if (!Array.isArray(edges) || !edges.length) {
-      return { inconclusive: true, shouldRefine: false, badRatio: 0, matchedRatio: 0, reasons: ['nœuds OSM indisponibles'] };
-    }
-
-    const ids = [...new Set(edges.flatMap(e => [Number(e.a), Number(e.b)]).filter(Number.isFinite))];
-    if (!ids.length) return { inconclusive: true, shouldRefine: false, badRatio: 0, matchedRatio: 0 };
-
-    // On récupère les ways parents des nœuds réellement traversés. out body
-    // conserve la liste des nœuds de chaque way, ce qui permet de reconnaître
-    // exactement chaque paire consécutive du trajet OSRM.
-    const waysById = new Map();
-    const chunkSize = 450;
-    for (let i = 0; i < ids.length; i += chunkSize) {
-      const chunk = ids.slice(i, i + chunkSize);
-      const query = `[out:json][timeout:14];node(id:${chunk.join(',')});way(bn);out body;`;
-      let data;
-      try {
-        data = await fetchOverpassFast(query, 6500);
-      } catch (_) {
-        return { inconclusive: true, shouldRefine: false, badRatio: 0, matchedRatio: 0, reasons: ['contrôle OSM indisponible'] };
-      }
-      if (serial !== state.planner.requestSerial) return null;
-      for (const el of (data.elements || [])) {
-        if (el?.type === 'way' && Array.isArray(el.nodes)) waysById.set(Number(el.id), el);
-      }
-    }
-
-    const pairWays = new Map();
-    for (const way of waysById.values()) {
-      const nodes = way.nodes || [];
-      for (let i = 1; i < nodes.length; i++) {
-        const key = osmPairKey(nodes[i - 1], nodes[i]);
-        if (!pairWays.has(key)) pairWays.set(key, []);
-        pairWays.get(key).push(way);
-      }
-    }
-
-    let totalM = 0, matchedM = 0, badM = 0;
-    const reasons = new Map();
-    for (const edge of edges) {
-      const d = Math.max(1, Number(edge.distance) || 1);
-      totalM += d;
-      const candidates = pairWays.get(osmPairKey(edge.a, edge.b)) || [];
-      if (!candidates.length) continue;
-      matchedM += d;
-
-      // Si plusieurs ways se superposent, une voie routière valide suffit :
-      // le segment physique peut être représenté par plusieurs objets OSM.
-      const assessments = candidates.map(w => roadWayAssessment(w.tags || {}));
-      const good = assessments.find(a => !a.bad);
-      if (!good) {
-        badM += d;
-        const why = assessments[0]?.reason || 'voie non adaptée';
-        reasons.set(why, (reasons.get(why) || 0) + d);
-      }
-    }
-
-    const matchedRatio = totalM > 0 ? matchedM / totalM : 0;
-    const badRatio = matchedM > 0 ? badM / matchedM : 0;
-    const topReasons = [...reasons.entries()].sort((a,b) => b[1] - a[1]).slice(0,3).map(([name]) => name);
-
-    // Fail closed : si plus de 5 % de la distance ne peut pas être rattachée
-    // aux ways OSM exacts, le parcours n'est pas validable en vélo route.
-    if (matchedRatio < 0.95) {
-      return { inconclusive: true, shouldRefine: badM > 0, badRatio, matchedRatio, reasons: topReasons.length ? topReasons : ['portion non vérifiée'] };
-    }
-    return { inconclusive: false, shouldRefine: badM > 0, badRatio, matchedRatio, reasons: topReasons };
-  }
-
   async function inspectRoadRouteSurface(coordsOut, serial) {
     const points = (coordsOut || []).map(c => ({ lon: Number(c[0]), lat: Number(c[1]) }))
       .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon));
     if (points.length < 2) return { inconclusive: true, shouldRefine: false, badRatio: 0 };
 
     const km = routeDistance(points);
-    const count = Math.max(24, Math.min(220, Math.ceil(km / 0.10) + 1));
+    const count = Math.max(16, Math.min(120, Math.ceil(km / 0.20) + 1));
     const samples = sampleRoute(points, count).map(x => x.point);
     const query = `[out:json][timeout:12];(\n${samples.map(p =>
       `way(around:28,${p.lat.toFixed(6)},${p.lon.toFixed(6)})[\"highway\"];`
@@ -2304,7 +2165,7 @@
         const d = pointWayDistanceMeters(sample, way.geometry);
         if (d < bestD) { bestD = d; best = way; }
       }
-      if (!best || bestD > 9) continue;
+      if (!best || bestD > 22) continue;
       matched++;
       const assessment = roadWayAssessment(best.tags || {});
       if (assessment.bad) {
@@ -2358,7 +2219,6 @@
     if (state.planner.waypoints.length < 2) return;
     state.planner.routing = true;
     state.planner.routeValid = false;
-    setPlannerVerification('none', false);
     state.planner.lastRequestAt = Date.now();
     const serial = ++state.planner.requestSerial;
     const profile = getPlannerProfile();
@@ -2389,19 +2249,17 @@
         // Ensuite on contrôle strictement les types de voies et les surfaces.
         // Au moindre échantillon clairement non revêtu, Valhalla Road recalcule.
         try {
-          const osmDetailed = await routeWithOsrm(profile, serial, true);
-          if (serial !== state.planner.requestSerial || !osmDetailed?.coords) return;
-          coordsOut = osmDetailed.coords;
+          coordsOut = await routeWithOsrm(profile, serial);
+          if (serial !== state.planner.requestSerial || !coordsOut) return;
 
           const instantPoints = coordsOut.map(c => ({ lon: Number(c[0]), lat: Number(c[1]), ele: null }));
           state.planner.routePoints = instantPoints;
           state.planner.routeValid = false; // visible immédiatement, verrouillé pendant le contrôle
-          // Pointillé = proposition provisoire non encore validée.
-          drawPlannerLine(instantPoints, true);
+          drawPlannerLine(instantPoints, false);
           updatePlannerButtons();
-          ui.plannerStatus.textContent = `${profile.icon} ${routeDistance(instantPoints).toFixed(1)} km · OSM vélo · vérification des voies exactes…`;
+          ui.plannerStatus.textContent = `${profile.icon} ${routeDistance(instantPoints).toFixed(1)} km · OSM vélo · vérification revêtement…`;
 
-          let check = await inspectRoadOsrmEdges(osmDetailed.edges, serial);
+          let check = await inspectRoadRouteSurface(coordsOut, serial);
           if (serial !== state.planner.requestSerial || !check) return;
 
           // Si le contrôle OSM détecte une seule portion clairement incompatible
@@ -2429,12 +2287,20 @@
                   ? ` (${refinedCheck.reasons.join(', ')})`
                   : '';
                 const refinedPoints = refined.map(c => ({ lon: Number(c[0]), lat: Number(c[1]), ele: null }));
-                markRoadIncompatible(refinedPoints, `Aucun itinéraire 100 % adapté vélo route trouvé${why2}. Ajoute un point intermédiaire sur une route revêtue.`);
+                state.planner.routePoints = refinedPoints;
+                state.planner.routeValid = false;
+                drawPlannerLine(refinedPoints, false);
+                ui.plannerStatus.textContent = `${profile.icon} ⚠ Aucun itinéraire 100 % adapté vélo route trouvé${why2}. Ajoute un point intermédiaire sur une route revêtue.`;
+                updatePlannerButtons();
                 return;
               }
               if (refinedCheck.inconclusive) {
                 const refinedPoints = refined.map(c => ({ lon: Number(c[0]), lat: Number(c[1]), ele: null }));
-                markRoadVerificationUnavailable(refinedPoints, 'Le tracé Valhalla a été calculé, mais le service de contrôle du revêtement est indisponible.');
+                state.planner.routePoints = refinedPoints;
+                state.planner.routeValid = false;
+                drawPlannerLine(refinedPoints, false);
+                ui.plannerStatus.textContent = `${profile.icon} ⚠ Impossible de confirmer le revêtement sur tout le parcours. Enregistrement Vélo route bloqué.`;
+                updatePlannerButtons();
                 return;
               }
             } catch (_) {
@@ -2442,12 +2308,20 @@
               // Si OSM était explicitement mauvais, on ne permet PAS d'enregistrer
               // ce trajet juste parce que Valhalla est indisponible.
               if (check.shouldRefine) {
-                markRoadIncompatible(instantPoints, 'Le tracé OSM contient une portion non revêtue et Valhalla Route ne répond pas. Modifie un point pour imposer une route revêtue.');
+                state.planner.routePoints = instantPoints;
+                state.planner.routeValid = false;
+                drawPlannerLine(instantPoints, false);
+                ui.plannerStatus.textContent = `${profile.icon} ⚠ Le tracé OSM contient une portion non revêtue et Valhalla Route ne répond pas. Enregistrement bloqué.`;
+                updatePlannerButtons();
                 return;
               }
               // Contrôle inconclusif + Valhalla indisponible : profil Vélo route
               // non validable. On affiche le tracé OSM mais on bloque l'enregistrement.
-              markRoadVerificationUnavailable(instantPoints, 'Le contrôle du revêtement et Valhalla Route sont momentanément indisponibles. Aucun tronçon interdit n’a été identifié.');
+              state.planner.routePoints = instantPoints;
+              state.planner.routeValid = false;
+              drawPlannerLine(instantPoints, false);
+              ui.plannerStatus.textContent = `${profile.icon} ⚠ Revêtement non vérifiable et Valhalla Route indisponible. Enregistrement Vélo route bloqué.`;
+              updatePlannerButtons();
               return;
             }
           } else {
@@ -2466,12 +2340,20 @@
           if (serial !== state.planner.requestSerial || !fallbackCheck) return;
           if (!fallbackCheck.inconclusive && fallbackCheck.shouldRefine) {
             const fallbackPoints = coordsOut.map(c => ({ lon: Number(c[0]), lat: Number(c[1]), ele: null }));
-            markRoadIncompatible(fallbackPoints, 'Le seul itinéraire trouvé comporte une portion non revêtue. Enregistrement Vélo route bloqué.');
+            state.planner.routePoints = fallbackPoints;
+            state.planner.routeValid = false;
+            drawPlannerLine(fallbackPoints, false);
+            ui.plannerStatus.textContent = `${profile.icon} ⚠ Le seul itinéraire trouvé comporte une portion non revêtue. Enregistrement bloqué.`;
+            updatePlannerButtons();
             return;
           }
           if (fallbackCheck.inconclusive) {
             const fallbackPoints = coordsOut.map(c => ({ lon: Number(c[0]), lat: Number(c[1]), ele: null }));
-            markRoadVerificationUnavailable(fallbackPoints, 'Valhalla a trouvé un tracé, mais le service de contrôle du revêtement est indisponible.');
+            state.planner.routePoints = fallbackPoints;
+            state.planner.routeValid = false;
+            drawPlannerLine(fallbackPoints, false);
+            ui.plannerStatus.textContent = `${profile.icon} ⚠ Impossible de vérifier suffisamment le revêtement du tracé Valhalla. Enregistrement Vélo route bloqué.`;
+            updatePlannerButtons();
             return;
           }
         }
@@ -2492,7 +2374,6 @@
       if (serial !== state.planner.requestSerial || !coordsOut) return;
       state.planner.routePoints = coordsOut.map(c => ({ lon: Number(c[0]), lat: Number(c[1]), ele: null }));
       state.planner.routeValid = true;
-      setPlannerVerification(profile.activityMode === 'road' ? 'verified' : 'none', false);
       drawPlannerLine(state.planner.routePoints, false);
       const km = routeDistance(state.planner.routePoints);
       ui.plannerStatus.textContent = usedFallback
@@ -2532,7 +2413,7 @@
     }).addTo(state.map);
   }
 
-  async function savePlannerRoute(options = {}) {
+  async function savePlannerRoute() {
     if (state.planner.routePoints.length < 2) return;
     ui.plannerSaveBtn.disabled = true;
     ui.plannerStatus.textContent = 'Récupération du relief…';
@@ -2544,8 +2425,7 @@
       const geometry = state.planner.routePoints.length > 3000
         ? resampleRouteByDistance(state.planner.routePoints, 3000)
         : state.planner.routePoints.map(p => ({...p}));
-      const unverifiedRoad = !!options.forceUnverified && profile.activityMode === 'road';
-      const route = buildRouteObject(name, geometry, { source: 'planner', plannerProfile: state.planner.mode, transportMode: profile.activityMode === 'hike' ? 'hike' : 'bike', roadSurfaceVerification: unverifiedRoad ? 'unverified-user-override' : (profile.activityMode === 'road' ? 'verified' : null) });
+      const route = buildRouteObject(name, geometry, { source: 'planner', plannerProfile: state.planner.mode, transportMode: profile.activityMode === 'hike' ? 'hike' : 'bike' });
       try {
         const relief = await elevatedRouteCopy(route, 240);
         if (relief.high != null) {
@@ -2562,7 +2442,7 @@
       renderRouteStats();
       stopPlanner(true);
       renderSavedRoutes();
-      toast(unverifiedRoad ? `Parcours « ${name} » enregistré avec revêtement non vérifié.` : `Parcours « ${name} » enregistré.`);
+      toast(`Parcours « ${name} » enregistré.`);
     } catch (err) {
       toast('Impossible d’enregistrer ce parcours.');
     } finally {
@@ -3820,18 +3700,12 @@
     ui.plannerGpsBtn.addEventListener('click', useGpsAsPlannerStart);
     ui.plannerUndoBtn.addEventListener('click', undoPlannerWaypoint);
     ui.plannerClearBtn.addEventListener('click', clearPlanner);
-    ui.plannerSaveBtn.addEventListener('click', () => savePlannerRoute());
-    ui.plannerVerifyRetryBtn?.addEventListener('click', retryPlannerVerification);
-    ui.plannerSaveUnverifiedBtn?.addEventListener('click', () => {
-      if (state.planner.verification?.status !== 'unavailable' || !state.planner.verification?.overrideAllowed) return;
-      savePlannerRoute({ forceUnverified: true });
-    });
+    ui.plannerSaveBtn.addEventListener('click', savePlannerRoute);
     document.querySelectorAll('[data-planner-mode]').forEach(btn => btn.addEventListener('click', () => {
       const nextMode = btn.dataset.plannerMode;
       if (!PLANNER_PROFILES[nextMode]) return;
       state.planner.mode = nextMode;
       state.planner.routeValid = false;
-      setPlannerVerification('none', false);
       const profile = getPlannerProfile();
       document.querySelectorAll('[data-planner-mode]').forEach(b => b.classList.toggle('active', b === btn));
       ui.plannerStatus.textContent = `${profile.icon} ${profile.label} · ${profile.description}.`;
@@ -3895,7 +3769,7 @@
   }
 
   function registerSW() {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.9', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.7', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
   }
 
   initMap();

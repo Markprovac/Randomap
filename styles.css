@@ -1389,14 +1389,3 @@ body.activity-choice-open{overflow:hidden}
 
 /* V1.10.1 — profil altimétrique filtré */
 .elevation-filter-note{padding:4px 10px 9px;color:#718096;font-size:10px;line-height:1.3;text-align:center}
-
-
-/* V1.10.9 — contrôle Vélo route : distinguer incompatibilité et service indisponible */
-.planner-verify-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:8px}
-.planner-verify-actions button{min-height:43px;border-radius:11px;padding:7px 9px;font-weight:850;font-size:10px}
-.planner-retry{border:1px solid var(--line);background:#f2f6f4;color:#274052}
-.planner-save-unverified{border:1px solid #e7b451;background:#fff5dc;color:#8a5900}
-.planner-panel.verification-unavailable{border-color:#e8c77d}
-.planner-panel.verification-incompatible{border-color:#efabb8}
-@media(max-width:900px){.planner-verify-actions button{min-height:44px;font-size:12px}}
-@media(max-width:430px){.planner-verify-actions{grid-template-columns:1fr}}

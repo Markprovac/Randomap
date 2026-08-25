@@ -1519,3 +1519,10 @@ body.pull-refresh-allowed {
      Le pull-to-refresh est filtré finement en JavaScript. */
   overscroll-behavior-y: auto;
 }
+
+
+/* V1.10.17 — fermeture explicite du planificateur */
+.planner-head{position:relative;padding-right:46px}
+.planner-close-btn{position:absolute;top:0;right:0;width:40px;height:40px;border:1px solid var(--line);border-radius:12px;background:#fff;color:var(--text);font-size:20px;font-weight:800;display:grid;place-items:center;box-shadow:0 3px 10px rgba(20,32,51,.08);z-index:3}
+.planner-close-btn:active{transform:scale(.96)}
+@media(max-width:900px){.planner-head{padding-right:48px}.planner-close-btn{width:42px;height:42px}}

@@ -1,17 +1,18 @@
-const CACHE = 'rando-radar-v1.10.17';
+const CACHE = 'rando-radar-v1.10.26-capacitor1';
 const APP_SHELL = [
   './',
   './index.html',
-  './styles.css?v=1.10.17',
-  './app.js?v=1.10.17',
+  './styles.css?v=1.10.26',
+  './app.js?v=1.10.26',
   './manifest.webmanifest',
   './icon-192.png',
-  './icon-512.png'
-];
-
-const EXTERNAL_SHELL = [
-  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
-  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
+  './icon-512.png',
+  './vendor/leaflet/leaflet.css',
+  './vendor/leaflet/leaflet.js',
+  './vendor/leaflet-rotate/leaflet-rotate.umd.min.js',
+  './vendor/leaflet/images/marker-icon.png',
+  './vendor/leaflet/images/marker-icon-2x.png',
+  './vendor/leaflet/images/marker-shadow.png'
 ];
 
 self.addEventListener('install', event => {
@@ -21,15 +22,6 @@ self.addEventListener('install', event => {
       const req = new Request(url, { cache: 'reload' });
       const resp = await fetch(req);
       if (resp.ok) await cache.put(req, resp.clone());
-    }));
-    // Leaflet est indispensable pour démarrer l'application sans réseau.
-    // unpkg autorise CORS : on le place dans le cache lors de l'installation.
-    await Promise.all(EXTERNAL_SHELL.map(async url => {
-      try {
-        const req = new Request(url, { mode: 'cors', cache: 'reload' });
-        const resp = await fetch(req);
-        if (resp.ok) await cache.put(req, resp.clone());
-      } catch (_) {}
     }));
     await self.skipWaiting();
   })());
@@ -71,12 +63,6 @@ self.addEventListener('fetch', event => {
   const req = event.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
-
-  // Leaflet : cache d'abord pour permettre le démarrage complet hors ligne.
-  if (url.origin === 'https://unpkg.com' && /leaflet@1\.9\.4\/dist\/leaflet\.(?:js|css)$/.test(url.pathname)) {
-    event.respondWith(cacheFirst(req));
-    return;
-  }
 
   if (url.origin !== self.location.origin) return;
 

@@ -1,10 +1,11 @@
-/* Rando Radar v1.10.17 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
+/* Rando Radar v1.10.26 — marqueur altitude aligné + fiche parcours glissable */
 (() => {
   'use strict';
 
   const ROUTER_MIN_INTERVAL = 1100;
   const SAVED_ROUTES_KEY = 'randoRadar.savedRoutes.v1';
   const ACTIVE_ACTIVITY_KEY = 'randoRadar.activeActivity.v1';
+  const RADAR_PREF_KEY = 'randoRadar.radarPrefs.v1';
   let lastActivityPersistAt = 0;
   let activityPersistWarned = false;
   const VALHALLA_ROUTE_URL = 'https://valhalla1.openstreetmap.de/route';
@@ -21,10 +22,10 @@
     mtb:    { label: 'VTT', icon: '🚵', relationRoutes: ['mtb','bicycle'], transportMode: 'bike' }
   };
   const ACTIVITY_PROFILES = {
-    hike:   { label: 'Randonnée', icon: '🥾', cycling: false, navSpeed: 4,  maxPlausible: 35,  offRouteM: 80 },
-    road:   { label: 'Vélo route', icon: '🚴', cycling: true,  navSpeed: 20, maxPlausible: 120, offRouteM: 120 },
-    gravel: { label: 'Gravel',     icon: '🚲', cycling: true,  navSpeed: 17, maxPlausible: 120, offRouteM: 110 },
-    mtb:    { label: 'VTT',        icon: '🚵', cycling: true,  navSpeed: 12, maxPlausible: 120, offRouteM: 100 }
+    hike:   { label: 'Randonnée', icon: '🥾', cycling: false, navSpeed: 4,  maxPlausible: 35,  nativeAccuracy: 30, nativeMaxSpeed: 160, offRouteM: 80 },
+    road:   { label: 'Vélo route', icon: '🚴', cycling: true,  navSpeed: 20, maxPlausible: 120, nativeAccuracy: 40, nativeMaxSpeed: 160, offRouteM: 120 },
+    gravel: { label: 'Gravel',     icon: '🚲', cycling: true,  navSpeed: 17, maxPlausible: 120, nativeAccuracy: 40, nativeMaxSpeed: 160, offRouteM: 110 },
+    mtb:    { label: 'VTT',        icon: '🚵', cycling: true,  navSpeed: 12, maxPlausible: 120, nativeAccuracy: 40, nativeMaxSpeed: 160, offRouteM: 100 }
   };
   const PLANNER_PROFILES = {
     hike: {
@@ -62,11 +63,38 @@
     radarLayer: null,
     radarEnabled: true,
     radarTimer: null,
+    radarRefreshTimer: null,
+    radarCurrentIndex: -1,
+    radarLoadedAt: 0,
+    radarLoading: false,
+    radarAnimationWanted: false,
+    radarTileErrors: 0,
     location: null,
     locationMarker: null,
     accuracyCircle: null,
     watchId: null,
+    nativeGps: {
+      active: false,
+      starting: false,
+      plugin: null,
+      lastError: null,
+      syncTimer: null,
+      lastSyncedTimestamp: 0,
+      pointCount: 0,
+      batteryUnrestricted: false
+    },
     centerOnNextLocation: false,
+    mapFollowGps: true,
+    navigation: {
+      orientationMode: 'auto', // auto | north | manual
+      deviceHeading: null,
+      deviceHeadingAt: 0,
+      gpsHeading: null,
+      orientationListening: false,
+      orientationPermission: 'unknown',
+      mapGestureActive: false,
+      mapGestureAt: 0
+    },
     route: null,
     routeLine: null,
     routeMarkers: [],
@@ -118,6 +146,7 @@
       line: null,
       timer: null,
       name: '',
+      nativeSessionId: '',
       targetSelect: false,
       target: null,
       targetMarker: null,
@@ -134,14 +163,14 @@
   const ui = {
     locateBtn: $('locateBtn'), installBtn: $('installBtn'), gpsBadge: $('gpsBadge'),
     radarToggle: $('radarToggle'), radarPanel: $('radarPanel'), radarSlider: $('radarSlider'), radarPlay: $('radarPlay'), radarTime: $('radarTime'),
-    mapWrap: $('mapWrap'), mapCloseBtn: $('mapCloseBtn'), mapLocateBtn: $('mapLocateBtn'), mapZoomControls: $('mapZoomControls'), mapZoomInBtn: $('mapZoomInBtn'), mapZoomOutBtn: $('mapZoomOutBtn'), mapExpandHint: $('mapExpandHint'),
+    mapWrap: $('mapWrap'), mapCloseBtn: $('mapCloseBtn'), mapLocateBtn: $('mapLocateBtn'), mapCompassBtn: $('mapCompassBtn'), mapZoomControls: $('mapZoomControls'), mapZoomInBtn: $('mapZoomInBtn'), mapZoomOutBtn: $('mapZoomOutBtn'), mapExpandHint: $('mapExpandHint'),
     tempNow: $('tempNow'), rainNow: $('rainNow'), gustNow: $('gustNow'), feelNow: $('feelNow'), elevationNow: $('elevationNow'), weatherIcon: $('weatherIcon'),
     alertCard: $('alertCard'), alertIcon: $('alertIcon'), alertTitle: $('alertTitle'), alertText: $('alertText'),
     gpxInput: $('gpxInput'), analyzeBtn: $('analyzeBtn'), routeCard: $('routeCard'), routeName: $('routeName'), routeDistance: $('routeDistance'), routeGain: $('routeGain'), routeLoss: $('routeLoss'), routeHigh: $('routeHigh'), routeForecast: $('routeForecast'), clearRouteBtn: $('clearRouteBtn'), exportRouteBtn: $('exportRouteBtn'), routeStartBtn: $('routeStartBtn'), routeShowBtn: $('routeShowBtn'),
     hourlyForecast: $('hourlyForecast'), refreshWeatherBtn: $('refreshWeatherBtn'), refreshWeatherIcon: $('refreshWeatherIcon'), refreshWeatherLabel: $('refreshWeatherLabel'), weatherUpdatedAt: $('weatherUpdatedAt'), toast: $('toast'),
     createRouteBtn: $('createRouteBtn'), plannerPanel: $('plannerPanel'), plannerStatus: $('plannerStatus'), plannerGpsBtn: $('plannerGpsBtn'), plannerUndoBtn: $('plannerUndoBtn'), plannerClearBtn: $('plannerClearBtn'), plannerSaveBtn: $('plannerSaveBtn'), plannerCloseBtn: $('plannerCloseBtn'),
     hikeFinderPanel: $('hikeFinderPanel'), hikeFinderStatus: $('hikeFinderStatus'), hikeFinderCloseBtn: $('hikeFinderCloseBtn'), hikeFinderGpsBtn: $('hikeFinderGpsBtn'), hikeFinderListBtn: $('hikeFinderListBtn'), hikeFinderMapResults: $('hikeFinderMapResults'), hikeFinderResultsCard: $('hikeFinderResultsCard'), hikeFinderResultsSummary: $('hikeFinderResultsSummary'), hikeFinderResultsList: $('hikeFinderResultsList'), hikeFinderNewSearchBtn: $('hikeFinderNewSearchBtn'), routesFindHikesBtn: $('routesFindHikesBtn'),
-    finderMapDetail: $('finderMapDetail'), finderMapDetailType: $('finderMapDetailType'), finderMapDetailName: $('finderMapDetailName'), finderMapDetailBody: $('finderMapDetailBody'), finderMapDetailClose: $('finderMapDetailClose'),
+    finderMapDetail: $('finderMapDetail'), finderMapDetailToggle: $('finderMapDetailToggle'), finderMapDetailType: $('finderMapDetailType'), finderMapDetailName: $('finderMapDetailName'), finderMapDetailBody: $('finderMapDetailBody'), finderMapDetailClose: $('finderMapDetailClose'),
     finderDetailCard: $('finderDetailCard'), finderDetailType: $('finderDetailType'), finderDetailName: $('finderDetailName'), finderDetailBody: $('finderDetailBody'), finderDetailClose: $('finderDetailClose'),
     routeDuration: $('routeDuration'), routeDifficulty: $('routeDifficulty'), routeLow: $('routeLow'), routeSurface: $('routeSurface'), routeElevationSection: $('routeElevationSection'), routeElevationChart: $('routeElevationChart'), routeElevationHint: $('routeElevationHint'),
     savedRoutesCard: $('savedRoutesCard'), savedRoutesList: $('savedRoutesList'),
@@ -193,7 +222,15 @@
   }
 
   function initMap() {
-    state.map = L.map('map', { zoomControl: false, preferCanvas: true, tap: true }).setView([44.2, 6.7], 8);
+    state.map = L.map('map', {
+      zoomControl: false,
+      preferCanvas: true,
+      tap: true,
+      rotate: true,
+      bearing: 0,
+      touchRotate: true,
+      rotateControl: false
+    }).setView([44.2, 6.7], 8);
     L.control.zoom({ position: 'bottomright' }).addTo(state.map);
 
     state.baseLayers.topo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
@@ -207,6 +244,52 @@
     state.baseLayers.topo.addTo(state.map);
 
     state.map.on('click', handleMapClick);
+
+    // Le plugin de rotation peut déclencher des événements Leaflet proches d'un drag
+    // lors d'une rotation AUTOMATIQUE. On ne coupe donc le suivi GPS que si un
+    // vrai geste du doigt est en cours sur la carte. Cela évite que le point bleu
+    // parte hors écran alors que l'utilisateur n'a jamais déplacé la carte.
+    const mapContainer = state.map.getContainer();
+    const markMapGestureStart = () => {
+      state.navigation.mapGestureActive = true;
+      state.navigation.mapGestureAt = Date.now();
+    };
+    const markMapGestureEnd = () => {
+      state.navigation.mapGestureActive = false;
+    };
+    if (window.PointerEvent) {
+      mapContainer.addEventListener('pointerdown', markMapGestureStart, { passive: true });
+      window.addEventListener('pointerup', markMapGestureEnd, { passive: true });
+      window.addEventListener('pointercancel', markMapGestureEnd, { passive: true });
+    } else {
+      mapContainer.addEventListener('touchstart', markMapGestureStart, { passive: true });
+      window.addEventListener('touchend', markMapGestureEnd, { passive: true });
+      window.addEventListener('touchcancel', markMapGestureEnd, { passive: true });
+      mapContainer.addEventListener('mousedown', markMapGestureStart, { passive: true });
+      window.addEventListener('mouseup', markMapGestureEnd, { passive: true });
+    }
+
+    // Uniquement un glissement réellement initié par l'utilisateur suspend le suivi.
+    // ◎ recentre immédiatement et réactive ensuite le suivi automatique.
+    state.map.on('dragstart', () => {
+      const userInitiated = state.navigation.mapGestureActive ||
+        (Date.now() - Number(state.navigation.mapGestureAt || 0) < 500);
+      if (!userInitiated || !state.mapFollowGps) return;
+      state.mapFollowGps = false;
+      stopAutomaticHeading();
+      updateNavigationControls();
+    });
+
+    // Rotation volontaire à deux doigts : on respecte l'orientation choisie
+    // par l'utilisateur et on suspend le mode cap automatique.
+    state.map.on('rotatestart', () => {
+      if (state.navigation.orientationMode !== 'auto') return;
+      state.navigation.orientationMode = 'manual';
+      stopAutomaticHeading();
+      updateNavigationControls();
+    });
+    state.map.on('rotate', updateCompassRose);
+    updateNavigationControls();
   }
 
   function handleMapClick(e) {
@@ -233,9 +316,16 @@
     document.body.classList.add('map-fullscreen');
     ui.mapCloseBtn.classList.remove('hidden');
     ui.mapLocateBtn.classList.remove('hidden');
+    ui.mapCompassBtn?.classList.remove('hidden');
     ui.mapZoomControls.classList.remove('hidden');
     syncActivityMapPanel();
-    setTimeout(() => state.map.invalidateSize(), 50);
+    ensureOrientationTracking(false).catch(() => {});
+    setTimeout(() => {
+      state.map.invalidateSize();
+      if (state.mapFollowGps && state.location) centerMapOnLocation(false);
+      applyAutomaticHeading();
+      updateNavigationControls();
+    }, 50);
   }
 
   function exitMapFullscreen() {
@@ -244,9 +334,155 @@
     document.body.classList.remove('map-fullscreen');
     ui.mapCloseBtn.classList.add('hidden');
     ui.mapLocateBtn.classList.add('hidden');
+    ui.mapCompassBtn?.classList.add('hidden');
     ui.mapZoomControls.classList.add('hidden');
+    stopAutomaticHeading();
+    if (typeof state.map?.setBearing === 'function') state.map.setBearing(0);
+    if (state.navigation.orientationMode === 'manual') state.navigation.orientationMode = 'north';
     syncActivityMapPanel();
-    setTimeout(() => state.map.invalidateSize(), 50);
+    setTimeout(() => { state.map.invalidateSize(); updateNavigationControls(); }, 50);
+  }
+
+  function normalizeHeading(deg) {
+    const n = Number(deg);
+    return Number.isFinite(n) ? ((n % 360) + 360) % 360 : null;
+  }
+
+  function screenOrientationAngle() {
+    const angle = Number(screen?.orientation?.angle ?? window.orientation ?? 0);
+    return Number.isFinite(angle) ? angle : 0;
+  }
+
+  function headingFromOrientationEvent(event) {
+    if (!event) return null;
+    if (Number.isFinite(Number(event.webkitCompassHeading))) {
+      return normalizeHeading(Number(event.webkitCompassHeading) + screenOrientationAngle());
+    }
+    // alpha=0 quand le haut du téléphone pointe vers le Nord ; alpha augmente
+    // dans le sens antihoraire. Un cap cartographique augmente dans le sens horaire.
+    if ((event.absolute === true || event.type === 'deviceorientationabsolute') && Number.isFinite(Number(event.alpha))) {
+      return normalizeHeading(360 - Number(event.alpha) + screenOrientationAngle());
+    }
+    return null;
+  }
+
+  function preferredNavigationHeading() {
+    const gpsHeading = normalizeHeading(state.navigation.gpsHeading);
+    const speed = Number(state.location?.speed);
+    // En mouvement, le cap GPS est plus stable et correspond exactement à la trajectoire.
+    if (gpsHeading != null && Number.isFinite(speed) && speed >= 3) return gpsHeading;
+    const deviceFresh = Date.now() - Number(state.navigation.deviceHeadingAt || 0) < 2500;
+    const deviceHeading = normalizeHeading(state.navigation.deviceHeading);
+    if (deviceFresh && deviceHeading != null) return deviceHeading;
+    return gpsHeading;
+  }
+
+  function stopAutomaticHeading() {
+    if (!state.map) return;
+    if (typeof state.map.setHeading === 'function') state.map.setHeading(null);
+    else if (typeof state.map.stopHeadingUp === 'function') state.map.stopHeadingUp();
+  }
+
+  function applyAutomaticHeading() {
+    if (!state.map || !state.mapFullscreen || !state.mapFollowGps) return;
+    if (state.navigation.orientationMode !== 'auto') return;
+    const heading = preferredNavigationHeading();
+    if (heading == null || typeof state.map.setHeading !== 'function') return;
+    state.map.setHeading(heading, { ease: 0.18, deadzone: 1.2 });
+  }
+
+  function updateCompassRose() {
+    if (!ui.mapCompassBtn) return;
+    const rose = ui.mapCompassBtn.querySelector('.compass-rose');
+    const bearing = typeof state.map?.getBearing === 'function' ? Number(state.map.getBearing()) || 0 : 0;
+    if (rose) rose.style.transform = `rotate(${bearing}deg)`;
+  }
+
+  function updateNavigationControls() {
+    if (ui.mapLocateBtn) {
+      ui.mapLocateBtn.classList.toggle('following', !!state.mapFollowGps);
+      ui.mapLocateBtn.title = state.mapFollowGps ? 'Position suivie · toucher pour recentrer' : 'Reprendre le suivi de ma position';
+    }
+    if (!ui.mapCompassBtn) return;
+    const mode = state.navigation.orientationMode;
+    ui.mapCompassBtn.classList.toggle('auto', mode === 'auto');
+    ui.mapCompassBtn.classList.toggle('north-locked', mode === 'north');
+    ui.mapCompassBtn.classList.toggle('manual', mode === 'manual');
+    ui.mapCompassBtn.classList.toggle('follow-paused', !state.mapFollowGps);
+    const label = ui.mapCompassBtn.querySelector('.compass-mode');
+    if (label) label.textContent = mode === 'auto' ? 'AUTO' : (mode === 'north' ? 'N' : 'MAN');
+    const title = mode === 'auto'
+      ? 'Orientation automatique active · toucher pour verrouiller le Nord'
+      : (mode === 'north' ? 'Nord verrouillé · toucher pour orientation automatique' : 'Orientation manuelle · toucher pour revenir en automatique');
+    ui.mapCompassBtn.title = title;
+    ui.mapCompassBtn.setAttribute('aria-label', title);
+    ui.mapCompassBtn.setAttribute('aria-pressed', mode === 'auto' ? 'true' : 'false');
+    updateCompassRose();
+  }
+
+  function setOrientationMode(mode, { notify = false } = {}) {
+    const next = ['auto','north','manual'].includes(mode) ? mode : 'north';
+    state.navigation.orientationMode = next;
+    stopAutomaticHeading();
+    if (next === 'north') {
+      try { state.map?.touchRotate?.disable?.(); } catch (_) {}
+      if (typeof state.map?.setBearing === 'function') state.map.setBearing(0);
+      if (notify) toast('🧭 Nord verrouillé · la carte ne tourne plus toute seule.');
+    } else {
+      try { state.map?.touchRotate?.enable?.(); } catch (_) {}
+      if (next === 'auto') {
+        applyAutomaticHeading();
+        if (notify) toast('🧭 Orientation automatique activée.');
+      }
+    }
+    updateNavigationControls();
+  }
+
+  function centerMapOnLocation(raiseZoom = false) {
+    if (!state.location || !state.map) return false;
+    const ll = [state.location.lat, state.location.lon];
+    const currentZoom = state.map.getZoom();
+    const zoom = raiseZoom ? Math.max(currentZoom, 15) : currentZoom;
+    // setView est plus fiable que panTo avec leaflet-rotate : le point GPS
+    // reste réellement au centre du viewport même lorsque la carte pivote.
+    state.map.setView(ll, zoom, { animate: false });
+    return true;
+  }
+
+  function enableGpsMapFollow({ raiseZoom = true } = {}) {
+    state.mapFollowGps = true;
+    state.centerOnNextLocation = !centerMapOnLocation(raiseZoom);
+    updateNavigationControls();
+    applyAutomaticHeading();
+  }
+
+  async function ensureOrientationTracking(fromUserGesture = false) {
+    if (state.navigation.orientationListening) return true;
+    if (!('DeviceOrientationEvent' in window)) return false;
+
+    const requestPermission = window.DeviceOrientationEvent?.requestPermission;
+    if (typeof requestPermission === 'function' && state.navigation.orientationPermission !== 'granted') {
+      if (!fromUserGesture) return false;
+      try {
+        const result = await requestPermission.call(window.DeviceOrientationEvent);
+        state.navigation.orientationPermission = result;
+        if (result !== 'granted') return false;
+      } catch (_) { return false; }
+    } else {
+      state.navigation.orientationPermission = 'granted';
+    }
+
+    const handle = event => {
+      const heading = headingFromOrientationEvent(event);
+      if (heading == null) return;
+      state.navigation.deviceHeading = heading;
+      state.navigation.deviceHeadingAt = Date.now();
+      applyAutomaticHeading();
+    };
+    window.addEventListener('deviceorientationabsolute', handle, true);
+    window.addEventListener('deviceorientation', handle, true);
+    state.navigation.orientationListening = true;
+    return true;
   }
 
   function switchBase(name) {
@@ -258,28 +494,137 @@
     document.querySelectorAll('[data-basemap]').forEach(btn => btn.classList.toggle('active', btn.dataset.basemap === name));
   }
 
-  async function loadRadar() {
-    if (!navigator.onLine || state.offline?.activePackage) { ui.radarTime.textContent = 'Radar hors ligne'; return; }
+  function persistRadarPrefs() {
     try {
-      const res = await fetch('https://api.rainviewer.com/public/weather-maps.json', { cache: 'no-store' });
-      if (!res.ok) throw new Error('Radar indisponible');
-      const data = await res.json();
+      localStorage.setItem(RADAR_PREF_KEY, JSON.stringify({
+        enabled: !!state.radarEnabled,
+        animationWanted: !!state.radarAnimationWanted
+      }));
+    } catch (_) {}
+  }
+
+  function restoreRadarPrefs() {
+    try {
+      const prefs = JSON.parse(localStorage.getItem(RADAR_PREF_KEY) || 'null');
+      if (prefs && typeof prefs === 'object') {
+        if (typeof prefs.enabled === 'boolean') state.radarEnabled = prefs.enabled;
+        if (typeof prefs.animationWanted === 'boolean') state.radarAnimationWanted = prefs.animationWanted;
+      }
+    } catch (_) {}
+    ui.radarToggle.classList.toggle('active', state.radarEnabled);
+    ui.radarPanel.classList.toggle('hidden', !state.radarEnabled);
+  }
+
+  function stopRadarAnimation({ keepWanted = false } = {}) {
+    if (state.radarTimer) clearInterval(state.radarTimer);
+    state.radarTimer = null;
+    ui.radarPlay.textContent = '▶';
+    if (!keepWanted) {
+      state.radarAnimationWanted = false;
+      persistRadarPrefs();
+    }
+  }
+
+  function startRadarAnimation() {
+    if (!state.radarFrames.length || !state.radarEnabled || !navigator.onLine || state.offline?.activePackage) return false;
+    if (state.radarTimer) clearInterval(state.radarTimer);
+    state.radarAnimationWanted = true;
+    persistRadarPrefs();
+    ui.radarPlay.textContent = '⏸';
+    state.radarTimer = setInterval(() => {
+      let i = Number(ui.radarSlider.value);
+      if (!Number.isFinite(i)) i = state.radarCurrentIndex >= 0 ? state.radarCurrentIndex : state.radarFrames.length - 1;
+      i += 1;
+      if (i >= state.radarFrames.length) i = 0;
+      showRadarFrame(i);
+    }, 650);
+    return true;
+  }
+
+  function startRadarRefreshTimer() {
+    if (state.radarRefreshTimer) clearInterval(state.radarRefreshTimer);
+    state.radarRefreshTimer = setInterval(() => {
+      if (document.visibilityState !== 'visible' || !navigator.onLine || state.offline?.activePackage || !state.radarEnabled) return;
+      loadRadar({ preserveSelection: true, silent: true }).catch(() => {});
+    }, 5 * 60 * 1000);
+  }
+
+  async function fetchRadarMetadataWithRetry() {
+    let lastErr = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 9000);
+      try {
+        const res = await fetch(`https://api.rainviewer.com/public/weather-maps.json?_=${Date.now()}`, {
+          cache: 'no-store',
+          signal: controller.signal
+        });
+        if (!res.ok) throw new Error(`Radar HTTP ${res.status}`);
+        const data = await res.json();
+        if (!data?.host || !(data.radar?.past || []).length) throw new Error('Aucune image radar');
+        clearTimeout(timer);
+        return data;
+      } catch (err) {
+        clearTimeout(timer);
+        lastErr = err;
+        if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 700 * (attempt + 1)));
+      }
+    }
+    throw lastErr || new Error('Radar indisponible');
+  }
+
+  async function loadRadar({ preserveSelection = false, silent = false } = {}) {
+    if (!navigator.onLine || state.offline?.activePackage) {
+      ui.radarTime.textContent = 'Radar hors ligne';
+      stopRadarAnimation({ keepWanted: true });
+      return false;
+    }
+    if (state.radarLoading) return false;
+    state.radarLoading = true;
+    const oldFrame = state.radarFrames[state.radarCurrentIndex >= 0 ? state.radarCurrentIndex : Number(ui.radarSlider.value)];
+    const oldTime = preserveSelection ? Number(oldFrame?.time) : NaN;
+    const wanted = state.radarAnimationWanted;
+    try {
+      const data = await fetchRadarMetadataWithRetry();
       state.radarHost = data.host;
       state.radarFrames = data.radar?.past || [];
-      if (!state.radarFrames.length) throw new Error('Aucune image radar');
+      state.radarLoadedAt = Date.now();
+      state.radarTileErrors = 0;
       ui.radarSlider.max = String(state.radarFrames.length - 1);
-      ui.radarSlider.value = String(state.radarFrames.length - 1);
-      showRadarFrame(state.radarFrames.length - 1);
+      let index = state.radarFrames.length - 1;
+      if (Number.isFinite(oldTime)) {
+        let bestDiff = Infinity;
+        state.radarFrames.forEach((frame, i) => {
+          const diff = Math.abs(Number(frame.time) - oldTime);
+          if (diff < bestDiff) { bestDiff = diff; index = i; }
+        });
+      }
+      showRadarFrame(index);
+      startRadarRefreshTimer();
+      if (wanted && document.visibilityState === 'visible') startRadarAnimation();
+      return true;
     } catch (err) {
-      ui.radarTime.textContent = 'Radar indisponible';
-      toast('Impossible de charger le radar pour le moment.');
+      // Si des images avaient déjà été chargées, on les garde au lieu de casser
+      // complètement le radar lors d'une micro-coupure 4G/Wi-Fi.
+      if (state.radarFrames.length) {
+        const i = Math.max(0, Math.min(state.radarCurrentIndex >= 0 ? state.radarCurrentIndex : state.radarFrames.length - 1, state.radarFrames.length - 1));
+        showRadarFrame(i);
+        if (!silent) toast('Radar temporairement indisponible · dernière animation conservée.');
+      } else {
+        ui.radarTime.textContent = 'Radar indisponible';
+        if (!silent) toast('Impossible de charger le radar pour le moment.');
+      }
+      return false;
+    } finally {
+      state.radarLoading = false;
     }
   }
 
   function showRadarFrame(index) {
-    if (!state.radarFrames.length) return;
+    if (!state.radarFrames.length || !state.radarHost) return;
     index = Math.max(0, Math.min(index, state.radarFrames.length - 1));
     const frame = state.radarFrames[index];
+    state.radarCurrentIndex = index;
     if (state.radarLayer) state.map.removeLayer(state.radarLayer);
     const url = `${state.radarHost}${frame.path}/256/{z}/{x}/{y}/2/1_0.png`;
     state.radarLayer = L.tileLayer(url, {
@@ -287,7 +632,15 @@
       maxNativeZoom: 7,
       maxZoom: 19,
       tileSize: 256,
+      updateWhenIdle: false,
+      keepBuffer: 2,
       attribution: 'Weather radar © RainViewer'
+    });
+    state.radarLayer.on('tileerror', () => {
+      state.radarTileErrors += 1;
+      if (state.radarTileErrors === 5 && navigator.onLine && document.visibilityState === 'visible') {
+        setTimeout(() => loadRadar({ preserveSelection:true, silent:true }).catch(() => {}), 1200);
+      }
     });
     if (state.radarEnabled) state.radarLayer.addTo(state.map);
     ui.radarSlider.value = String(index);
@@ -300,38 +653,339 @@
     state.radarEnabled = !state.radarEnabled;
     ui.radarToggle.classList.toggle('active', state.radarEnabled);
     ui.radarPanel.classList.toggle('hidden', !state.radarEnabled);
-    if (!state.radarLayer) return;
-    if (state.radarEnabled) state.radarLayer.addTo(state.map);
-    else state.map.removeLayer(state.radarLayer);
+    persistRadarPrefs();
+    if (!state.radarEnabled) {
+      stopRadarAnimation({ keepWanted: false });
+      if (state.radarLayer && state.map.hasLayer(state.radarLayer)) state.map.removeLayer(state.radarLayer);
+      return;
+    }
+    if (!state.radarLayer || Date.now() - state.radarLoadedAt > 2 * 60 * 1000) {
+      loadRadar({ preserveSelection:true, silent:false }).catch(() => {});
+    } else if (!state.map.hasLayer(state.radarLayer)) {
+      state.radarLayer.addTo(state.map);
+    }
   }
 
   function toggleRadarAnimation() {
     if (state.radarTimer) {
-      clearInterval(state.radarTimer);
-      state.radarTimer = null;
-      ui.radarPlay.textContent = '▶';
+      stopRadarAnimation({ keepWanted:false });
       return;
     }
-    if (!state.radarFrames.length) return;
-    ui.radarPlay.textContent = '⏸';
-    state.radarTimer = setInterval(() => {
-      let i = Number(ui.radarSlider.value) + 1;
-      if (i >= state.radarFrames.length) i = 0;
-      showRadarFrame(i);
-    }, 650);
+    if (!state.radarFrames.length) {
+      state.radarAnimationWanted = true;
+      persistRadarPrefs();
+      loadRadar({ preserveSelection:false, silent:false }).then(ok => { if (ok) startRadarAnimation(); });
+      return;
+    }
+    startRadarAnimation();
   }
 
-  function startLocation(center = true) {
+  async function resumeRadarAfterForeground() {
+    if (!state.radarEnabled || !navigator.onLine || state.offline?.activePackage) return;
+    const stale = !state.radarFrames.length || Date.now() - state.radarLoadedAt > 90 * 1000;
+    if (stale) await loadRadar({ preserveSelection:true, silent:true });
+    else if (state.radarLayer && !state.map.hasLayer(state.radarLayer)) state.radarLayer.addTo(state.map);
+    if (state.radarAnimationWanted) startRadarAnimation();
+  }
+
+  function getNativeActivityTracker() {
+    const cap = window.Capacitor;
+    if (!cap) return null;
+    const platform = typeof cap.getPlatform === 'function' ? cap.getPlatform() : '';
+    if (platform !== 'android') return null;
+    const plugin = cap.Plugins?.RandoRadarTracker || null;
+    if (!plugin || typeof plugin.startTracking !== 'function' || typeof plugin.getPoints !== 'function') return null;
+    state.nativeGps.plugin = plugin;
+    return plugin;
+  }
+
+  function nativeActivitySessionId() {
+    return state.activity.nativeSessionId || '';
+  }
+
+  function makeNativeActivitySessionId() {
+    return `rr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  function startNativeSyncTimer() {
+    clearInterval(state.nativeGps.syncTimer);
+    state.nativeGps.syncTimer = setInterval(() => {
+      if (document.visibilityState === 'visible' && ['recording','paused','finished'].includes(state.activity.status)) {
+        syncNativeActivityTrack().catch(() => {});
+      }
+    }, 1500);
+  }
+
+  function ensureActivityUiTimer() {
+    clearInterval(state.activity.timer);
+    state.activity.timer = null;
+    if (['recording','paused','finished'].includes(state.activity.status)) {
+      state.activity.timer = setInterval(updateActivityUI, 1000);
+      updateActivityUI();
+    }
+  }
+
+  async function recoverNativeActivityState({ reason = 'resume', allowRestart = true } = {}) {
+    const plugin = getNativeActivityTracker();
+    if (!plugin) return false;
+
+    let nativeStatus = null;
+    if (typeof plugin.getStatus === 'function') {
+      try { nativeStatus = await plugin.getStatus(); }
+      catch (err) { console.warn('État GPS natif illisible', err); }
+    }
+
+    const nativeSessionId = String(nativeStatus?.sessionId || '').trim();
+    const nativeActive = nativeStatus?.active === true;
+
+    // Si le service Android connaît une activité active, il devient la source de vérité,
+    // même si Android a détruit la WebView ou si localStorage n'a pas eu le temps d'écrire.
+    if (nativeActive && nativeSessionId) {
+      const nativeMode = ACTIVITY_PROFILES[nativeStatus?.mode] ? nativeStatus.mode : (ACTIVITY_PROFILES[state.activity.mode] ? state.activity.mode : 'hike');
+      const nativeStartedAt = Number(nativeStatus?.startedAt) || Number(state.activity.startedAt) || Date.now();
+
+      if (!['recording','paused'].includes(state.activity.status) || state.activity.nativeSessionId !== nativeSessionId) {
+        clearActivityTrack();
+        clearActivityTarget();
+        state.activity.status = 'recording';
+        state.activity.mode = nativeMode;
+        state.activity.startedAt = nativeStartedAt;
+        state.activity.pausedAt = null;
+        state.activity.pausedMs = Number(state.activity.pausedMs) || 0;
+        state.activity.finishedAt = null;
+        state.activity.points = [];
+        state.activity.distanceKm = 0;
+        state.activity.currentSpeed = 0;
+        state.activity.nativeSessionId = nativeSessionId;
+        state.activity.name = nativeStatus?.activityName || `${getActivityProfile(nativeMode).label} restaurée`;
+        state.activity.line = L.polyline([], { color:'#fb7185', weight:5, opacity:.96 }).addTo(state.map);
+      } else {
+        state.activity.nativeSessionId = nativeSessionId;
+        state.activity.startedAt = nativeStartedAt;
+        state.activity.mode = nativeMode;
+        if (nativeStatus?.activityName) state.activity.name = nativeStatus.activityName;
+      }
+
+      state.nativeGps.active = true;
+      state.nativeGps.lastError = null;
+      startNativeSyncTimer();
+      ensureActivityUiTimer();
+      await syncNativeActivityTrack(true);
+      if (state.activity.status === 'recording') enableGpsMapFollow({ raiseZoom: false });
+      persistActivitySnapshot(true);
+      syncActivityMapPanel();
+      return true;
+    }
+
+    // Si la WebView se souvient d'une activité en cours mais que le service a été
+    // tué par Android, le relancer sans effacer le fichier de trace existant.
+    if (allowRestart && state.activity.status === 'recording' && state.activity.nativeSessionId) {
+      const restarted = await startNativeActivityLocation({ clear:false });
+      ensureActivityUiTimer();
+      if (restarted) {
+        await syncNativeActivityTrack(true);
+        persistActivitySnapshot(true);
+        return true;
+      }
+    }
+
+    if (['recording','paused','finished'].includes(state.activity.status)) ensureActivityUiTimer();
+    return false;
+  }
+
+  async function startNativeActivityLocation({ clear = false } = {}) {
+    if (state.nativeGps.starting) return false;
+    const plugin = getNativeActivityTracker();
+    const sessionId = nativeActivitySessionId();
+    if (!plugin || !sessionId) return false;
+
+    state.nativeGps.starting = true;
+    state.nativeGps.lastError = null;
+    const profile = getActivityProfile();
+    ui.gpsBadge.textContent = 'GPS natif : démarrage…';
+
+    try {
+      await plugin.startTracking({
+        sessionId,
+        clear: Boolean(clear),
+        startedAt: Number(state.activity.startedAt) || Date.now(),
+        mode: state.activity.mode || 'hike',
+        activityName: state.activity.name || '',
+        minTimeMs: profile.cycling ? 1800 : 2500,
+        minDistanceM: profile.cycling ? 3 : 2,
+        maxAccuracyM: profile.nativeAccuracy || (profile.cycling ? 40 : 30),
+        maxSpeedKmh: profile.nativeMaxSpeed || 160
+      });
+      state.nativeGps.active = true;
+      state.nativeGps.lastSyncedTimestamp = 0;
+      state.nativeGps.pointCount = 0;
+      ui.gpsBadge.textContent = 'GPS natif : actif';
+      ui.activityMapStatus.textContent = 'GPS NATIF · trace enregistrée écran éteint';
+      startNativeSyncTimer();
+      await syncNativeActivityTrack(true);
+      return true;
+    } catch (err) {
+      state.nativeGps.lastError = err;
+      state.nativeGps.active = false;
+      console.warn('Enregistreur GPS natif indisponible, repli GPS navigateur.', err);
+      return false;
+    } finally {
+      state.nativeGps.starting = false;
+    }
+  }
+
+  async function stopNativeActivityLocation() {
+    clearInterval(state.nativeGps.syncTimer);
+    state.nativeGps.syncTimer = null;
+    const plugin = state.nativeGps.plugin || getNativeActivityTracker();
+    if (!plugin || !nativeActivitySessionId()) {
+      state.nativeGps.active = false;
+      return;
+    }
+    try { await syncNativeActivityTrack(true); } catch (_) {}
+    try { await plugin.stopTracking({ sessionId: nativeActivitySessionId() }); }
+    catch (err) { console.warn('Arrêt enregistreur GPS natif impossible', err); }
+    state.nativeGps.active = false;
+    state.nativeGps.starting = false;
+  }
+
+  function nativePointToActivityPoint(raw) {
+    if (!raw) return null;
+    const lat = Number(raw.lat ?? raw.latitude);
+    const lon = Number(raw.lon ?? raw.longitude);
+    const timestamp = Number(raw.timestamp ?? raw.time);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(timestamp)) return null;
+    return {
+      lat,
+      lon,
+      ele: Number.isFinite(Number(raw.altitude)) ? Number(raw.altitude) : null,
+      time: new Date(timestamp).toISOString(),
+      timestamp,
+      accuracy: Number.isFinite(Number(raw.accuracy)) ? Number(raw.accuracy) : null,
+      speedKmh: Number.isFinite(Number(raw.speedKmh)) ? Math.max(0, Number(raw.speedKmh)) : null,
+      bearing: Number.isFinite(Number(raw.bearing)) ? normalizeHeading(Number(raw.bearing)) : null
+    };
+  }
+
+  function applyNativePointToLiveMap(point) {
+    if (!point || !state.map) return;
+    const timestamp = Number(point.timestamp) || Date.now();
+    const existingTs = Number(state.location?.timestamp) || 0;
+    // Le GPS natif est la référence pendant l'activité. On ignore seulement un
+    // point manifestement plus ancien que la dernière position déjà affichée.
+    if (existingTs && timestamp + 1500 < existingTs) return;
+
+    state.location = {
+      lat: point.lat,
+      lon: point.lon,
+      accuracy: Number.isFinite(point.accuracy) ? point.accuracy : null,
+      altitude: Number.isFinite(point.ele) ? point.ele : null,
+      speed: Number.isFinite(point.speedKmh) ? point.speedKmh : null,
+      heading: Number.isFinite(point.bearing) ? normalizeHeading(point.bearing) : null,
+      timestamp
+    };
+    if (state.location.heading != null) state.navigation.gpsHeading = state.location.heading;
+
+    const ll = [point.lat, point.lon];
+    if (!state.locationMarker) {
+      const icon = L.divIcon({ className: '', html: '<div class="user-dot"></div>', iconSize: [18,18], iconAnchor:[9,9] });
+      state.locationMarker = L.marker(ll, { icon, zIndexOffset: 1000 }).addTo(state.map);
+      state.accuracyCircle = L.circle(ll, {
+        radius: Number.isFinite(point.accuracy) ? point.accuracy : 10,
+        weight: 1, fillOpacity: .07, opacity: .35
+      }).addTo(state.map);
+    } else {
+      state.locationMarker.setLatLng(ll);
+      state.accuracyCircle?.setLatLng(ll).setRadius(Number.isFinite(point.accuracy) ? point.accuracy : 10);
+    }
+
+    ui.gpsBadge.textContent = Number.isFinite(point.accuracy)
+      ? `GPS natif : ±${Math.round(point.accuracy)} m`
+      : 'GPS natif : actif';
+    if (Number.isFinite(point.ele)) ui.elevationNow.textContent = `${Math.round(point.ele)} m`;
+
+    // IMPORTANT : la caméra suit maintenant exactement la même position native
+    // que celle enregistrée dans la trace. setView est volontairement utilisé
+    // plutôt que panTo, plus fiable avec la carte rotative Leaflet.
+    if (state.mapFollowGps || state.centerOnNextLocation) {
+      centerMapOnLocation(state.centerOnNextLocation);
+      state.centerOnNextLocation = false;
+    }
+    applyAutomaticHeading();
+    updateNavigationControls();
+  }
+
+  function replaceActivityTrackFromNative(points) {
+    if (!Array.isArray(points)) return;
+    const clean = points.map(nativePointToActivityPoint).filter(Boolean).sort((a,b) => a.timestamp - b.timestamp);
+    if (!clean.length) return;
+
+    state.activity.points = clean;
+    state.activity.distanceKm = clean.length > 1 ? routeDistance(clean) : 0;
+    const last = clean[clean.length - 1];
+    const prev = clean.length > 1 ? clean[clean.length - 2] : null;
+    applyNativePointToLiveMap(last);
+    if (Number.isFinite(last.speedKmh)) {
+      state.activity.currentSpeed = last.speedKmh;
+    } else if (prev) {
+      const dt = Math.max(0.5, (last.timestamp - prev.timestamp) / 1000);
+      state.activity.currentSpeed = (haversine(prev, last) / dt) * 3600;
+    } else {
+      state.activity.currentSpeed = 0;
+    }
+    state.nativeGps.lastSyncedTimestamp = last.timestamp;
+    if (Number.isFinite(last.bearing)) { state.navigation.gpsHeading = last.bearing; applyAutomaticHeading(); }
+
+    if (!state.activity.line) {
+      state.activity.line = L.polyline([], { color:'#fb7185', weight:5, opacity:.96 }).addTo(state.map);
+    }
+    state.activity.line.setLatLngs(clean.map(p => [p.lat, p.lon]));
+    updateActivityUI();
+    // Après une réouverture, le dernier point natif doit également remettre à jour
+    // l'avancement du GPX/profil altimétrique, pas seulement la trace rose.
+    if (state.activity.followRoute && state.location) updateRouteFollowGuide(state.location);
+    persistActivitySnapshot();
+  }
+
+  async function syncNativeActivityTrack(force = false) {
+    const plugin = getNativeActivityTracker();
+    const sessionId = nativeActivitySessionId();
+    if (!plugin || !sessionId) return false;
+    try {
+      const result = await plugin.getPoints({ sessionId });
+      const points = Array.isArray(result?.points) ? result.points : [];
+      state.nativeGps.pointCount = points.length;
+      state.nativeGps.batteryUnrestricted = result?.batteryUnrestricted === true;
+      if (!points.length) return false;
+      const newest = Number(points[points.length - 1]?.timestamp ?? points[points.length - 1]?.time) || 0;
+      if (!force && newest && newest <= state.nativeGps.lastSyncedTimestamp) {
+        if (Date.now() - newest > 12000) {
+          state.activity.currentSpeed = 0;
+          updateActivityUI();
+        }
+        return true;
+      }
+      replaceActivityTrackFromNative(points);
+      return true;
+    } catch (err) {
+      if (force) console.warn('Lecture trace GPS native impossible', err);
+      return false;
+    }
+  }
+
+
+  function startLocation(center = true, { forceWeb = false } = {}) {
+    if (center) {
+      enableGpsMapFollow({ raiseZoom: true });
+      ensureOrientationTracking(false).catch(() => {});
+    }
+
+    // Dans l’APK Android, le service natif enregistre la trace indépendamment de la WebView.
+    // Le GPS navigateur reste actif uniquement pour déplacer le point bleu et les aides à l’écran.
+
     if (!('geolocation' in navigator)) {
       toast('La géolocalisation n’est pas disponible sur cet appareil.');
       return;
-    }
-
-    if (center && state.location) {
-      state.map.setView([state.location.lat, state.location.lon], Math.max(state.map.getZoom(), 15));
-      state.centerOnNextLocation = false;
-    } else if (center) {
-      state.centerOnNextLocation = true;
     }
 
     if (state.watchId !== null) return;
@@ -348,15 +1002,23 @@
 
   function updateLocation(pos) {
     const { latitude, longitude, accuracy, altitude, speed, heading } = pos.coords;
+    // Pendant une activité native, le service Android est la source de vérité
+    // pour le point bleu et la caméra. Le GPS Web reste un simple repli.
+    if (state.nativeGps.active && state.activity.nativeSessionId) {
+      const webTs = Number(pos.timestamp || Date.now());
+      const liveTs = Number(state.location?.timestamp || 0);
+      if (liveTs && webTs <= liveTs + 2000) return;
+    }
     state.location = {
       lat: latitude,
       lon: longitude,
       accuracy: Number.isFinite(accuracy) ? accuracy : null,
       altitude: Number.isFinite(altitude) ? altitude : null,
       speed: Number.isFinite(speed) ? speed * 3.6 : null,
-      heading: Number.isFinite(heading) ? heading : null,
+      heading: Number.isFinite(heading) ? normalizeHeading(heading) : null,
       timestamp: pos.timestamp || Date.now()
     };
+    if (state.location.heading != null) state.navigation.gpsHeading = state.location.heading;
     const ll = [latitude, longitude];
 
     if (!state.locationMarker) {
@@ -368,15 +1030,17 @@
       state.accuracyCircle.setLatLng(ll).setRadius(accuracy || 10);
     }
 
-    ui.gpsBadge.textContent = `GPS : ±${Math.round(accuracy || 0)} m`;
+    ui.gpsBadge.textContent = `${state.nativeGps.active ? 'GPS natif' : 'GPS'} : ±${Math.round(accuracy || 0)} m`;
     if (Number.isFinite(altitude)) ui.elevationNow.textContent = `${Math.round(altitude)} m`;
 
-    if (state.centerOnNextLocation) {
-      state.map.setView(ll, Math.max(state.map.getZoom(), 15));
+    if (state.mapFollowGps || state.centerOnNextLocation) {
+      centerMapOnLocation(state.centerOnNextLocation);
       state.centerOnNextLocation = false;
     }
+    applyAutomaticHeading();
+    updateNavigationControls();
 
-    if (state.activity.status === 'recording') recordActivityPoint(state.location);
+    if (state.activity.status === 'recording' && !(state.activity.nativeSessionId && getNativeActivityTracker())) recordActivityPoint(state.location);
     if (state.activity.followRoute) updateRouteFollowGuide(state.location);
     if (state.activity.target) updateTargetGuide();
     if (['recording','paused'].includes(state.activity.status)) persistActivitySnapshot();
@@ -1283,12 +1947,25 @@
     });
   }
 
+  function redMapPointIcon() {
+    return L.divIcon({
+      className: 'rr-red-map-point-wrap',
+      html: '<span class="rr-red-map-point"></span>',
+      iconSize: [22, 22],
+      iconAnchor: [11, 11]
+    });
+  }
+
   function showElevationPointOnMap(point) {
     if (!state.map || !point || !Number.isFinite(point.lat) || !Number.isFinite(point.lon)) return;
+    const ll = [Number(point.lat), Number(point.lon)];
+    // Important avec leaflet-rotate : un vrai L.marker est recalculé par le plugin
+    // comme le point GPS bleu. Un circleMarker SVG/Canvas placé dans markerPane
+    // pouvait rester visuellement décalé quand la carte était tournée.
     if (!state.elevationHoverMarker) {
-      state.elevationHoverMarker = L.circleMarker([point.lat, point.lon], { radius: 8, color: '#fff', weight: 3, fillColor: '#e11d48', fillOpacity: 1, pane: 'markerPane' }).addTo(state.map);
-    } else state.elevationHoverMarker.setLatLng([point.lat, point.lon]);
-    state.elevationHoverMarker.bindTooltip(`${Math.round(Number(point.ele) || 0)} m`, { direction:'top', offset:[0,-8] }).openTooltip();
+      state.elevationHoverMarker = L.marker(ll, { icon: redMapPointIcon(), zIndexOffset: 1200, interactive: false }).addTo(state.map);
+    } else state.elevationHoverMarker.setLatLng(ll);
+    state.elevationHoverMarker.bindTooltip(`${Math.round(Number(point.ele) || 0)} m`, { direction:'top', offset:[0,-10] }).openTooltip();
   }
 
   function updateElevationChartProgress(chartKey, ratio) {
@@ -1378,12 +2055,20 @@
 
   function setFinderDetailLoading(result, source) {
     const p = getFinderProfile(result.profile || state.hikeFinder.profile);
+    // Un ancien point rouge du profil ne doit jamais rester affiché quand on
+    // sélectionne un autre parcours. Avec la carte rotative, un marker placé
+    // dans markerPane pouvait aussi sembler décalé par rapport au tracé.
+    if (state.elevationHoverMarker) {
+      try { state.map?.removeLayer(state.elevationHoverMarker); } catch (_) {}
+      state.elevationHoverMarker = null;
+    }
     const loading = '<div class="finder-detail-loading"><span class="finder-detail-spinner">↻</span><strong>Calcul du relief…</strong><small>Distance, dénivelé, difficulté et profil altimétrique.</small></div>';
     if (source === 'map') {
       ui.finderMapDetailType.textContent = `${p.icon} ${p.label}`;
       ui.finderMapDetailName.textContent = result.name;
       ui.finderMapDetailBody.innerHTML = loading;
       ui.finderMapDetail.classList.remove('hidden');
+      setFinderMapDetailCollapsed(false);
       ui.hikeFinderPanel.classList.add('hidden');
     } else {
       ui.finderDetailType.textContent = `${p.icon} ${p.label}`;
@@ -1419,9 +2104,118 @@
     }
   }
 
+  function setFinderMapDetailCollapsed(collapsed) {
+    if (!ui.finderMapDetail) return;
+    ui.finderMapDetail.classList.toggle('collapsed', !!collapsed);
+    if (ui.finderMapDetailToggle) {
+      ui.finderMapDetailToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      ui.finderMapDetailToggle.setAttribute('aria-label', collapsed ? 'Agrandir les détails du parcours' : 'Réduire les détails du parcours');
+    }
+    if (!collapsed) ui.finderMapDetail.scrollTop = 0;
+  }
+
   function closeFinderMapDetail() {
     ui.finderMapDetail?.classList.add('hidden');
+    ui.finderMapDetail?.classList.remove('collapsed');
     if (state.hikeFinder.active) ui.hikeFinderPanel?.classList.remove('hidden');
+  }
+
+  function bindFinderMapDetailSheet() {
+    const panel = ui.finderMapDetail;
+    if (!panel || panel.dataset.sheetBound === '1') return;
+    panel.dataset.sheetBound = '1';
+
+    const resetDragVisual = () => {
+      panel.classList.remove('sheet-dragging');
+      panel.style.removeProperty('--sheet-drag-y');
+    };
+
+    const applySwipe = (dy, dx = 0) => {
+      if (!Number.isFinite(dy) || Math.abs(dy) < 42 || Math.abs(dy) < Math.abs(dx) * 1.15) return false;
+      if (dy > 0) {
+        if (panel.classList.contains('collapsed')) closeFinderMapDetail();
+        else setFinderMapDetailCollapsed(true);
+      } else {
+        setFinderMapDetailCollapsed(false);
+      }
+      return true;
+    };
+
+    ui.finderMapDetailToggle?.addEventListener('click', e => {
+      e.stopPropagation();
+      setFinderMapDetailCollapsed(!panel.classList.contains('collapsed'));
+    });
+
+    // Sur Android/WebView, un glissement vertical peut être transformé en scroll
+    // et provoquer pointercancel avant pointerup. La poignée et l'en-tête utilisent
+    // donc une capture de pointeur explicite, tandis qu'un fallback touchstart/end
+    // couvre aussi le geste fait depuis le haut du contenu.
+    let pointerId = null, startY = 0, startX = 0, lastY = 0, lastX = 0;
+    let suppressTouchUntil = 0;
+    const pointerStart = e => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      if (e.target.closest('button:not(.finder-detail-sheet-toggle),input,a,.elevation-chart')) return;
+      const gripArea = !!e.target.closest('.finder-detail-sheet-toggle,.finder-detail-head');
+      if (!gripArea && !panel.classList.contains('collapsed') && panel.scrollTop > 2) return;
+      pointerId = e.pointerId;
+      startY = lastY = e.clientY;
+      startX = lastX = e.clientX;
+      panel.classList.add('sheet-dragging');
+      try { panel.setPointerCapture(pointerId); } catch (_) {}
+    };
+    const pointerMove = e => {
+      if (pointerId == null || e.pointerId !== pointerId) return;
+      lastY = e.clientY; lastX = e.clientX;
+      const dy = lastY - startY;
+      if (Math.abs(dy) > 4) {
+        // Retour visuel : la fiche suit légèrement le doigt sans modifier sa
+        // position finale tant que le seuil de réduction n'est pas franchi.
+        const visualY = Math.max(-36, Math.min(150, dy * 0.72));
+        panel.style.setProperty('--sheet-drag-y', `${visualY}px`);
+        if (e.cancelable) e.preventDefault();
+      }
+    };
+    const pointerFinish = e => {
+      if (pointerId == null || e.pointerId !== pointerId) return;
+      const dy = (Number.isFinite(e.clientY) ? e.clientY : lastY) - startY;
+      const dx = (Number.isFinite(e.clientX) ? e.clientX : lastX) - startX;
+      try { panel.releasePointerCapture(pointerId); } catch (_) {}
+      pointerId = null;
+      resetDragVisual();
+      suppressTouchUntil = Date.now() + 650;
+      applySwipe(dy, dx);
+    };
+    panel.addEventListener('pointerdown', pointerStart);
+    panel.addEventListener('pointermove', pointerMove, { passive:false });
+    panel.addEventListener('pointerup', pointerFinish);
+    panel.addEventListener('pointercancel', e => {
+      // Si Android annule le pointeur à cause d'un scroll, le fallback tactile
+      // ci-dessous décidera du geste au touchend.
+      if (pointerId != null && e.pointerId === pointerId) {
+        pointerId = null;
+        resetDragVisual();
+      }
+    });
+
+    let touchStartY = null, touchStartX = null;
+    panel.addEventListener('touchstart', e => {
+      if (e.touches.length !== 1) return;
+      if (e.target.closest('button:not(.finder-detail-sheet-toggle),input,a,.elevation-chart')) return;
+      const gripArea = !!e.target.closest('.finder-detail-sheet-toggle,.finder-detail-head');
+      if (!gripArea && !panel.classList.contains('collapsed') && panel.scrollTop > 2) return;
+      touchStartY = e.touches[0].clientY;
+      touchStartX = e.touches[0].clientX;
+    }, { passive:true });
+    panel.addEventListener('touchend', e => {
+      if (touchStartY == null) return;
+      if (Date.now() < suppressTouchUntil) { touchStartY = touchStartX = null; return; }
+      const t = e.changedTouches?.[0];
+      const dy = t ? t.clientY - touchStartY : 0;
+      const dx = t ? t.clientX - touchStartX : 0;
+      touchStartY = touchStartX = null;
+      if (pointerId == null) applySwipe(dy, dx);
+    }, { passive:true });
+    panel.addEventListener('touchcancel', () => { touchStartY = touchStartX = null; }, { passive:true });
   }
 
   function closeFinderDetailCard() { ui.finderDetailCard?.classList.add('hidden'); }
@@ -2605,7 +3399,8 @@
       pausedAt: a.pausedAt,
       pausedMs: a.pausedMs || 0,
       finishedAt: a.finishedAt,
-      points: (a.points || []).map(p => ({
+      nativeSessionId: a.nativeSessionId || '',
+      points: a.nativeSessionId ? [] : (a.points || []).map(p => ({
         lat: Number(p.lat), lon: Number(p.lon),
         ele: hasElevation(p.ele) ? Number(p.ele) : null,
         time: p.time || null,
@@ -2643,6 +3438,14 @@
     catch (_) { clearPersistedActivity(); return false; }
     if (!snap || !['recording','paused','finished'].includes(snap.status)) return false;
 
+    // Les versions précédentes enregistraient l'activité via la WebView : écran éteint,
+    // Android pouvait mettre les callbacks en file d'attente et créer de grandes lignes droites.
+    // On ne restaure pas une ancienne activité encore en cours sans session native.
+    if (['recording','paused'].includes(snap.status) && getNativeActivityTracker() && !snap.nativeSessionId) {
+      clearPersistedActivity();
+      return false;
+    }
+
     // Évite de ressusciter une activité oubliée depuis plusieurs jours.
     if (!snap.savedAt || Date.now() - Number(snap.savedAt) > 48 * 3600 * 1000) {
       clearPersistedActivity();
@@ -2673,6 +3476,7 @@
     state.activity.distanceKm = Number(snap.distanceKm) || (pts.length > 1 ? routeDistance(pts) : 0);
     state.activity.currentSpeed = snap.status === 'recording' ? (Number(snap.currentSpeed) || 0) : 0;
     state.activity.name = snap.name || `${getActivityProfile(mode).label} restaurée`;
+    state.activity.nativeSessionId = typeof snap.nativeSessionId === 'string' ? snap.nativeSessionId : '';
     state.activity.followRoute = followRoute;
     state.activity.followRouteCumKm = followRoute ? buildCumulativeRouteKm(followRoute.points) : null;
     state.activity.followRouteLastIndex = Number.isInteger(snap.followRouteLastIndex) ? snap.followRouteLastIndex : null;
@@ -2694,13 +3498,17 @@
       ui.targetGuide.classList.remove('hidden');
     }
 
-    clearInterval(state.activity.timer);
-    state.activity.timer = setInterval(updateActivityUI, 1000);
-    updateActivityUI();
+    ensureActivityUiTimer();
     syncActivityMapPanel();
 
     if (snap.status === 'recording' || snap.status === 'paused') {
       startLocation(false);
+      if (snap.status === 'recording') enableGpsMapFollow({ raiseZoom: false });
+      if (state.activity.nativeSessionId && getNativeActivityTracker()) {
+        // Le vrai état du service sera relu juste après le chargement.
+        // Cela évite de repartir avec une interface vide alors que la trace native existe déjà.
+        recoverNativeActivityState({ reason:'snapshot-restore', allowRestart: snap.status === 'recording' }).catch(() => {});
+      }
       setAlert('safe', '↻', 'Activité restaurée', `${getActivityProfile(mode).label} reprise après le rechargement de la page.`);
       toast(snap.status === 'paused' ? 'Activité restaurée en pause.' : 'Activité restaurée · GPS repris.');
       if (snap.mapFullscreen) {
@@ -2713,6 +3521,9 @@
     }
     // Réécrit immédiatement l'état restauré : même un second rechargement
     // juste après le premier ne peut pas perdre l'activité.
+    if (state.activity.nativeSessionId && getNativeActivityTracker()) {
+      recoverNativeActivityState({ reason:'restore-final', allowRestart: snap.status === 'recording' }).catch(() => {});
+    }
     persistActivitySnapshot(true);
     return true;
   }
@@ -2741,6 +3552,7 @@
     state.activity.points = [];
     state.activity.distanceKm = 0;
     state.activity.currentSpeed = 0;
+    state.activity.nativeSessionId = getNativeActivityTracker() ? makeNativeActivitySessionId() : '';
     const activityProfile = getActivityProfile();
     state.activity.name = routeToFollow
       ? `${routeToFollow.name} · ${activityProfile.label} · ${new Date().toLocaleString('fr-FR', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})}`
@@ -2748,10 +3560,15 @@
     state.activity.line = L.polyline([], { color:'#fb7185', weight:5, opacity:.96 }).addTo(state.map);
     persistActivitySnapshot(true);
     startLocation(false);
-    if (state.location) recordActivityPoint(state.location, true);
-    clearInterval(state.activity.timer);
-    state.activity.timer = setInterval(updateActivityUI, 1000);
-    updateActivityUI();
+    enableGpsMapFollow({ raiseZoom: true });
+    if (state.activity.nativeSessionId) {
+      startNativeActivityLocation({ clear:true }).then(ok => {
+        if (!ok && state.location) recordActivityPoint(state.location, true);
+      });
+    } else if (state.location) {
+      recordActivityPoint(state.location, true);
+    }
+    ensureActivityUiTimer();
     if (routeToFollow) {
       drawRoute(false);
       setAlert('safe', '🧭', 'Suivi du GPX en cours', `${routeToFollow.name} · le tracé bleu reste affiché et ta trace réelle est enregistrée en rose.`);
@@ -2775,7 +3592,7 @@
   function recordActivityPoint(loc, force = false) {
     if (state.activity.status !== 'recording') return;
     const accuracy = Number(loc.accuracy);
-    if (!force && Number.isFinite(accuracy) && accuracy > 60) return;
+    if (!force && Number.isFinite(accuracy) && accuracy > (getActivityProfile().nativeAccuracy || 40)) return;
 
     const p = {
       lat: loc.lat,
@@ -2814,12 +3631,15 @@
       state.activity.status = 'paused';
       state.activity.pausedAt = Date.now();
       state.activity.currentSpeed = 0;
+      stopNativeActivityLocation();
       toast('Activité en pause.');
     } else if (state.activity.status === 'paused') {
       state.activity.pausedMs += Date.now() - state.activity.pausedAt;
       state.activity.pausedAt = null;
       state.activity.status = 'recording';
-      if (state.location) recordActivityPoint(state.location, true);
+      startLocation(false);
+      if (state.activity.nativeSessionId) startNativeActivityLocation({ clear:false }).catch(() => {});
+      else if (state.location) recordActivityPoint(state.location, true);
       toast('Enregistrement repris.');
     }
     updateActivityUI();
@@ -2844,11 +3664,16 @@
     document.body.classList.remove('activity-choice-open');
   }
 
-  function finalizeActivity(keepTrack) {
+  async function finalizeActivity(keepTrack) {
     if (!['recording','paused'].includes(state.activity.status)) {
       closeFinishActivityModal();
       return;
     }
+
+    // Récupère d’abord tous les points enregistrés nativement pendant l’écran éteint,
+    // puis arrête le service et sa notification.
+    if (state.activity.nativeSessionId) await syncNativeActivityTrack(true);
+    await stopNativeActivityLocation();
 
     if (state.activity.status === 'paused' && state.activity.pausedAt) {
       state.activity.pausedMs += Date.now() - state.activity.pausedAt;
@@ -2884,6 +3709,7 @@
     state.activity.distanceKm = 0;
     state.activity.currentSpeed = 0;
     state.activity.name = '';
+    state.activity.nativeSessionId = '';
     state.activity.followRoute = null;
     state.activity.followRouteCumKm = null;
     state.activity.followRouteLastIndex = null;
@@ -2969,7 +3795,13 @@
     }
 
     ui.activityMapTitle.textContent = `${activityProfile.icon} ${activityProfile.label}`;
-    ui.activityMapStatus.textContent = a.status === 'paused' ? 'EN PAUSE' : 'GPS · enregistrement';
+    ui.activityMapStatus.textContent = a.status === 'finished'
+      ? 'TERMINÉE'
+      : a.status === 'paused'
+        ? 'EN PAUSE'
+        : (state.nativeGps.active
+            ? `GPS NATIF · ${state.nativeGps.pointCount || a.points.length || 0} pts · écran éteint`
+            : 'GPS · enregistrement');
     ui.activityMapDistance.textContent = distance;
     ui.activityMapTime.textContent = time;
     ui.activityMapSpeed.textContent = speed;
@@ -3059,7 +3891,7 @@
     if (rp && Number.isFinite(Number(rp.lat)) && Number.isFinite(Number(rp.lon))) {
       const rll = [Number(rp.lat), Number(rp.lon)];
       if (!state.activity.routeProgressMarker) {
-        state.activity.routeProgressMarker = L.circleMarker(rll, { radius:8, color:'#fff', weight:3, fillColor:'#e11d48', fillOpacity:1, pane:'markerPane' }).addTo(state.map);
+        state.activity.routeProgressMarker = L.marker(rll, { icon:redMapPointIcon(), zIndexOffset:1200, interactive:false }).addTo(state.map);
       } else state.activity.routeProgressMarker.setLatLng(rll);
       const altTxt = hasElevation(rp.ele) ? ` · ${Math.round(Number(rp.ele))} m` : '';
       state.activity.routeProgressMarker.bindTooltip(`${Math.round(progress)} %${altTxt}`, { direction:'top', offset:[0,-8] });
@@ -3958,8 +4790,21 @@
     ui.radarToggle.addEventListener('click', toggleRadar);
     ui.radarSlider.addEventListener('input', e => showRadarFrame(Number(e.target.value)));
     ui.radarPlay.addEventListener('click', toggleRadarAnimation);
-    ui.locateBtn.addEventListener('click', () => startLocation(true));
-    ui.mapLocateBtn.addEventListener('click', e => { e.stopPropagation(); startLocation(true); });
+    ui.locateBtn.addEventListener('click', () => { startLocation(true); ensureOrientationTracking(true).catch(() => {}); });
+    ui.mapLocateBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      startLocation(true);
+      ensureOrientationTracking(true).then(() => applyAutomaticHeading()).catch(() => {});
+    });
+    ui.mapCompassBtn?.addEventListener('click', async e => {
+      e.stopPropagation();
+      if (state.navigation.orientationMode === 'auto') {
+        setOrientationMode('north', { notify:true });
+      } else {
+        await ensureOrientationTracking(true).catch(() => false);
+        setOrientationMode('auto', { notify:true });
+      }
+    });
     ui.mapCloseBtn.addEventListener('click', e => {
       e.stopPropagation();
       if (state.hikeFinder.active) stopHikeFinder(true);
@@ -4001,6 +4846,7 @@
     ui.hikeFinderNewSearchBtn?.addEventListener('click', startHikeFinder);
     ui.hikeFinderCloseBtn?.addEventListener('click', () => { stopHikeFinder(true); exitMapFullscreen(); });
     ui.finderMapDetailClose?.addEventListener('click', closeFinderMapDetail);
+    bindFinderMapDetailSheet();
     ui.finderDetailClose?.addEventListener('click', closeFinderDetailCard);
     ui.finderMapDetail?.querySelector('.finder-detail-actions')?.addEventListener('click', handleFinderDetailAction);
     ui.finderDetailCard?.querySelector('.finder-detail-card-actions')?.addEventListener('click', handleFinderDetailAction);
@@ -4142,15 +4988,44 @@
     window.addEventListener('pagehide', () => persistActivitySnapshot(true));
     window.addEventListener('beforeunload', () => persistActivitySnapshot(true));
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') persistActivitySnapshot(true);
+      if (document.visibilityState === 'hidden') {
+        persistActivitySnapshot(true);
+        // Les timers JS sont suspendus en arrière-plan. On mémorise l'intention
+        // de lecture pour redémarrer proprement l'animation au retour.
+        if (state.radarTimer) state.radarAnimationWanted = true;
+        stopRadarAnimation({ keepWanted:true });
+        persistRadarPrefs();
+      } else {
+        // Android peut suspendre ou recréer la WebView pendant que le service GPS
+        // continue. À chaque retour au premier plan on reconstruit donc l'UI depuis
+        // le service natif et son fichier de trace.
+        recoverNativeActivityState({ reason:'visibility', allowRestart:true }).catch(() => {});
+        resumeRadarAfterForeground().catch(() => {});
+      }
+    });
+    window.addEventListener('pageshow', () => {
+      recoverNativeActivityState({ reason:'pageshow', allowRestart:true }).catch(() => {});
+      resumeRadarAfterForeground().catch(() => {});
+    });
+    window.addEventListener('focus', () => {
+      if (document.visibilityState === 'visible') {
+        recoverNativeActivityState({ reason:'focus', allowRestart:true }).catch(() => {});
+        resumeRadarAfterForeground().catch(() => {});
+      }
     });
   }
 
   function registerSW() {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.17', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+    // Dans l'APK Capacitor, les fichiers de l'application sont déjà embarqués.
+    // On évite le service worker PWA pour ne jamais conserver une ancienne version
+    // de l'interface après une mise à jour de l'APK.
+    const isNativeCapacitor = !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform());
+    if (isNativeCapacitor) return;
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.26', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
   }
 
   initMap();
+  ensureOrientationTracking(false).catch(() => {});
   bindEvents();
   bindOfflineEvents();
   const activityRestored = restoreActivitySnapshot();
@@ -4158,7 +5033,12 @@
   renderSavedRoutes();
   updateActivityUI();
   if (activityRestored) syncActivityMapPanel();
+  // Récupération à froid : fonctionne même si Android a tué l'interface avant
+  // que pagehide/localStorage ait eu le temps de sauvegarder la dernière seconde.
+  setTimeout(() => recoverNativeActivityState({ reason:'cold-start-1', allowRestart:true }).catch(() => {}), 250);
+  setTimeout(() => recoverNativeActivityState({ reason:'cold-start-2', allowRestart:true }).catch(() => {}), 1400);
+  restoreRadarPrefs();
   registerSW();
-  if (navigator.onLine) loadRadar(); else setTimeout(handleOfflineNetworkLoss, 250);
+  if (navigator.onLine && state.radarEnabled) loadRadar({ preserveSelection:false, silent:true }); else setTimeout(handleOfflineNetworkLoss, 250);
   setTimeout(() => startLocation(true), 400);
 })();

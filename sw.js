@@ -1,9 +1,9 @@
-const CACHE = 'rando-radar-v1.10.19';
+const CACHE = 'rando-radar-v1.10.20';
 const APP_SHELL = [
   './',
   './index.html',
-  './styles.css?v=1.10.19',
-  './app.js?v=1.10.19',
+  './styles.css?v=1.10.20',
+  './app.js?v=1.10.20',
   './manifest.webmanifest',
   './icon-192.png',
   './icon-512.png'

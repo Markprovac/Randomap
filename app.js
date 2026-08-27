@@ -1,4 +1,4 @@
-/* Rando Radar v1.10.19 — fiches parcours bottom sheet + contrôles carte corrigés */
+/* Rando Radar v1.10.20 — centrage GPS continu pendant activité */
 (() => {
   'use strict';
 
@@ -253,6 +253,10 @@
     state.map.on('dragstart', () => {
       const userInitiated = state.navigation.mapGestureActive || (Date.now() - Number(state.navigation.mapGestureAt || 0) < 500);
       if (!userInitiated || !state.mapFollowGps) return;
+      // Pendant une activité, la position GPS doit rester au centre de la carte.
+      // On laisse l'utilisateur déplacer momentanément la carte, mais le prochain
+      // point GPS recentre automatiquement la vue au lieu de couper le suivi.
+      if (['recording','paused'].includes(state.activity.status)) return;
       state.mapFollowGps = false;
       stopAutomaticHeading();
       updateNavigationControls();
@@ -3007,6 +3011,7 @@
 
     if (snap.status === 'recording' || snap.status === 'paused') {
       startLocation(false);
+      enableGpsMapFollow({ raiseZoom: false });
       setAlert('safe', '↻', 'Activité restaurée', `${getActivityProfile(mode).label} reprise après le rechargement de la page.`);
       toast(snap.status === 'paused' ? 'Activité restaurée en pause.' : 'Activité restaurée · GPS repris.');
       if (snap.mapFullscreen) {
@@ -3054,6 +3059,8 @@
     state.activity.line = L.polyline([], { color:'#fb7185', weight:5, opacity:.96 }).addTo(state.map);
     persistActivitySnapshot(true);
     startLocation(false);
+    // Une activité en cours suit toujours la position GPS au centre de la carte.
+    enableGpsMapFollow({ raiseZoom: true });
     if (state.location) recordActivityPoint(state.location, true);
     clearInterval(state.activity.timer);
     state.activity.timer = setInterval(updateActivityUI, 1000);
@@ -3062,9 +3069,14 @@
       drawRoute(false);
       setAlert('safe', '🧭', 'Suivi du GPX en cours', `${routeToFollow.name} · le tracé bleu reste affiché et ta trace réelle est enregistrée en rose.`);
       toast(`Parcours démarré : ${routeToFollow.name}`);
-      setTimeout(() => { if (state.routeLine) state.map.fitBounds(state.routeLine.getBounds(), { padding: [34, 34] }); }, 100);
+      // Si le GPS n'est pas encore disponible on peut montrer le parcours entier.
+      // Dès qu'une position existe, on conserve le centrage GPS de l'activité.
+      setTimeout(() => {
+        if (!state.location && state.routeLine) state.map.fitBounds(state.routeLine.getBounds(), { padding: [34, 34] });
+        else if (state.location) centerMapOnLocation(false);
+      }, 100);
     } else {
-      setAlert('safe', '▶️', 'Activité en cours', 'La trace GPS est enregistrée. La carte reste libre : ◎ te recentre sur ta position.');
+      setAlert('safe', '▶️', 'Activité en cours', 'La trace GPS est enregistrée. La carte suit automatiquement ta position au centre.');
       toast('Enregistrement GPS démarré.');
     }
 
@@ -4554,7 +4566,7 @@
   }
 
   function registerSW() {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.19', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.20', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
   }
 
   initMap();

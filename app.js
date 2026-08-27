@@ -1,4 +1,4 @@
-/* Rando Radar v1.10.18 — carte PWA alignée Capacitor + panneau activité glissable */
+/* Rando Radar v1.10.19 — fiches parcours bottom sheet + contrôles carte corrigés */
 (() => {
   'use strict';
 
@@ -152,7 +152,7 @@
     hourlyForecast: $('hourlyForecast'), refreshWeatherBtn: $('refreshWeatherBtn'), refreshWeatherIcon: $('refreshWeatherIcon'), refreshWeatherLabel: $('refreshWeatherLabel'), weatherUpdatedAt: $('weatherUpdatedAt'), toast: $('toast'),
     createRouteBtn: $('createRouteBtn'), plannerPanel: $('plannerPanel'), plannerStatus: $('plannerStatus'), plannerGpsBtn: $('plannerGpsBtn'), plannerUndoBtn: $('plannerUndoBtn'), plannerClearBtn: $('plannerClearBtn'), plannerSaveBtn: $('plannerSaveBtn'), plannerCloseBtn: $('plannerCloseBtn'),
     hikeFinderPanel: $('hikeFinderPanel'), hikeFinderStatus: $('hikeFinderStatus'), hikeFinderCloseBtn: $('hikeFinderCloseBtn'), hikeFinderGpsBtn: $('hikeFinderGpsBtn'), hikeFinderListBtn: $('hikeFinderListBtn'), hikeFinderMapResults: $('hikeFinderMapResults'), hikeFinderResultsCard: $('hikeFinderResultsCard'), hikeFinderResultsSummary: $('hikeFinderResultsSummary'), hikeFinderResultsList: $('hikeFinderResultsList'), hikeFinderNewSearchBtn: $('hikeFinderNewSearchBtn'), routesFindHikesBtn: $('routesFindHikesBtn'),
-    finderMapDetail: $('finderMapDetail'), finderMapDetailType: $('finderMapDetailType'), finderMapDetailName: $('finderMapDetailName'), finderMapDetailBody: $('finderMapDetailBody'), finderMapDetailClose: $('finderMapDetailClose'),
+    finderMapDetail: $('finderMapDetail'), finderMapDetailToggle: $('finderMapDetailToggle'), finderMapDetailType: $('finderMapDetailType'), finderMapDetailName: $('finderMapDetailName'), finderMapDetailBody: $('finderMapDetailBody'), finderMapDetailClose: $('finderMapDetailClose'),
     finderDetailCard: $('finderDetailCard'), finderDetailType: $('finderDetailType'), finderDetailName: $('finderDetailName'), finderDetailBody: $('finderDetailBody'), finderDetailClose: $('finderDetailClose'),
     routeDuration: $('routeDuration'), routeDifficulty: $('routeDifficulty'), routeLow: $('routeLow'), routeSurface: $('routeSurface'), routeElevationSection: $('routeElevationSection'), routeElevationChart: $('routeElevationChart'), routeElevationHint: $('routeElevationHint'),
     savedRoutesCard: $('savedRoutesCard'), savedRoutesList: $('savedRoutesList'),
@@ -1623,9 +1623,111 @@
     }
   }
 
+  function setFinderMapDetailCollapsed(collapsed) {
+    if (!ui.finderMapDetail) return;
+    ui.finderMapDetail.classList.toggle('collapsed', !!collapsed);
+    if (ui.finderMapDetailToggle) {
+      ui.finderMapDetailToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      ui.finderMapDetailToggle.setAttribute('aria-label', collapsed ? 'Agrandir les détails du parcours' : 'Réduire les détails du parcours');
+    }
+    if (!collapsed) ui.finderMapDetail.scrollTop = 0;
+  }
+
   function closeFinderMapDetail() {
     ui.finderMapDetail?.classList.add('hidden');
+    ui.finderMapDetail?.classList.remove('collapsed');
     if (state.hikeFinder.active) ui.hikeFinderPanel?.classList.remove('hidden');
+  }
+
+  function bindFinderMapDetailSheet() {
+    const panel = ui.finderMapDetail;
+    if (!panel || panel.dataset.sheetBound === '1') return;
+    panel.dataset.sheetBound = '1';
+
+    const resetDragVisual = () => {
+      panel.classList.remove('sheet-dragging');
+      panel.style.removeProperty('--sheet-drag-y');
+    };
+
+    const applySwipe = (dy, dx = 0) => {
+      if (!Number.isFinite(dy) || Math.abs(dy) < 38 || Math.abs(dy) < Math.abs(dx) * 1.10) return false;
+      if (dy > 0) {
+        if (panel.classList.contains('collapsed')) closeFinderMapDetail();
+        else setFinderMapDetailCollapsed(true);
+      } else {
+        setFinderMapDetailCollapsed(false);
+      }
+      return true;
+    };
+
+    ui.finderMapDetailToggle?.addEventListener('click', e => {
+      e.stopPropagation();
+      setFinderMapDetailCollapsed(!panel.classList.contains('collapsed'));
+    });
+
+    let pointerId = null, startY = 0, startX = 0, lastY = 0, lastX = 0;
+    let suppressTouchUntil = 0;
+    const canStart = target => {
+      if (target.closest('button:not(.finder-detail-sheet-toggle),input,a,.elevation-chart')) return false;
+      const gripArea = !!target.closest('.finder-detail-sheet-toggle,.finder-detail-head');
+      if (!gripArea && !panel.classList.contains('collapsed') && panel.scrollTop > 2) return false;
+      return true;
+    };
+    const pointerStart = e => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      if (!canStart(e.target)) return;
+      pointerId = e.pointerId;
+      startY = lastY = e.clientY;
+      startX = lastX = e.clientX;
+      panel.classList.add('sheet-dragging');
+      try { panel.setPointerCapture(pointerId); } catch (_) {}
+    };
+    const pointerMove = e => {
+      if (pointerId == null || e.pointerId !== pointerId) return;
+      lastY = e.clientY; lastX = e.clientX;
+      const dy = lastY - startY;
+      if (Math.abs(dy) > 4) {
+        const visualY = Math.max(-36, Math.min(160, dy * 0.76));
+        panel.style.setProperty('--sheet-drag-y', `${visualY}px`);
+        if (e.cancelable) e.preventDefault();
+      }
+    };
+    const pointerFinish = e => {
+      if (pointerId == null || e.pointerId !== pointerId) return;
+      const dy = (Number.isFinite(e.clientY) ? e.clientY : lastY) - startY;
+      const dx = (Number.isFinite(e.clientX) ? e.clientX : lastX) - startX;
+      try { panel.releasePointerCapture(pointerId); } catch (_) {}
+      pointerId = null;
+      resetDragVisual();
+      suppressTouchUntil = Date.now() + 650;
+      applySwipe(dy, dx);
+    };
+    panel.addEventListener('pointerdown', pointerStart);
+    panel.addEventListener('pointermove', pointerMove, { passive:false });
+    panel.addEventListener('pointerup', pointerFinish);
+    panel.addEventListener('pointercancel', e => {
+      if (pointerId != null && e.pointerId === pointerId) {
+        pointerId = null;
+        resetDragVisual();
+      }
+    });
+
+    let touchStartY = null, touchStartX = null;
+    panel.addEventListener('touchstart', e => {
+      if (e.touches.length !== 1 || !canStart(e.target)) return;
+      touchStartY = e.touches[0].clientY;
+      touchStartX = e.touches[0].clientX;
+    }, { passive:true });
+    panel.addEventListener('touchend', e => {
+      if (touchStartY == null) return;
+      if (Date.now() < suppressTouchUntil) { touchStartY = touchStartX = null; return; }
+      const t = e.changedTouches?.[0];
+      const dy = t ? t.clientY - touchStartY : 0;
+      const dx = t ? t.clientX - touchStartX : 0;
+      touchStartY = touchStartX = null;
+      if (pointerId == null) applySwipe(dy, dx);
+    }, { passive:true });
+    panel.addEventListener('touchcancel', () => { touchStartY = touchStartX = null; }, { passive:true });
   }
 
   function closeFinderDetailCard() { ui.finderDetailCard?.classList.add('hidden'); }
@@ -4301,6 +4403,7 @@
     ui.hikeFinderNewSearchBtn?.addEventListener('click', startHikeFinder);
     ui.hikeFinderCloseBtn?.addEventListener('click', () => { stopHikeFinder(true); exitMapFullscreen(); });
     ui.finderMapDetailClose?.addEventListener('click', closeFinderMapDetail);
+    bindFinderMapDetailSheet();
     ui.finderDetailClose?.addEventListener('click', closeFinderDetailCard);
     ui.finderMapDetail?.querySelector('.finder-detail-actions')?.addEventListener('click', handleFinderDetailAction);
     ui.finderDetailCard?.querySelector('.finder-detail-card-actions')?.addEventListener('click', handleFinderDetailAction);
@@ -4451,7 +4554,7 @@
   }
 
   function registerSW() {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.18', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.19', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
   }
 
   initMap();

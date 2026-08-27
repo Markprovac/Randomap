@@ -52,3 +52,5 @@ V1.10.16 : blocage du geste pull-to-refresh sur Carte, Activité, Parcours et M�
 
 
 V1.10.18 : carte PWA alignée sur l'ergonomie de la version Capacitor : boussole AUTO/Nord, suivi GPS centré, boutons GPS/boussole/+/- regroupés en haut à droite, panneau d'activité glissable vers le bas pour réduire et vers le haut pour agrandir. Leaflet reste chargé via CDN côté PWA pour éviter la dépendance au dossier vendor généré uniquement pendant le build APK.
+
+V1.10.19 : fiche de détails d'un parcours transformée en bottom sheet comme dans la version Capacitor : poignée visible, glissement vers le bas pour réduire, vers le haut pour agrandir, second glissement vers le bas pour fermer. La fiche passe au-dessus de la colonne GPS/boussole/+/- afin que le bouton − ne recouvre plus le contenu.

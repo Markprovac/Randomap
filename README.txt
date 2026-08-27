@@ -61,10 +61,18 @@ V1.10.21 — correction de régression carte/GPS
 - Fiche parcours développée placée sous la colonne de contrôles pour éviter le chevauchement du bouton −.
 
 
-V1.10.22 — GPS PWA point par point + reprise au premier plan
+V1.10.23 — GPS PWA point par point + reprise au premier plan
 - GPS navigateur demandé en haute précision avec maximumAge=0 : chaque nouvelle position fournie par Chrome est utilisée immédiatement.
 - Échantillonnage de trace rapproché du comportement APK : environ 2–3 m en vélo / 2 m à pied, ou un point après quelques secondes.
 - Retour dans la PWA pendant une activité : compteur recalculé immédiatement, timer UI relancé et watchPosition redémarré.
 - Message « Activité reprise · GPS relancé » restauré lors d’un vrai retour depuis l’arrière-plan.
 - Protection contre les grandes lignes droites après suspension : un trou GPS >20 s et >30 m ouvre un nouveau segment au lieu de relier artificiellement les deux points.
 - Les coupures sont conservées comme segments séparés dans l’export GPX.
+
+
+V1.10.23 — correction terrain PWA
+- suivi caméra GPS renforcé pendant activité, y compris avec rotation de carte
+- trace rose mise à jour point par point et remise au premier plan
+- timestamps GPS non monotones tolérés pour éviter une trace vide
+- vérification réseau réelle avant activation du mode Carte hors ligne
+- retour au premier plan : tentative automatique de réactivation de la carte en ligne

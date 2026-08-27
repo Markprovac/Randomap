@@ -1,4 +1,4 @@
-/* Rando Radar v1.10.22 — GPS PWA point par point + reprise après retour au premier plan */
+/* Rando Radar v1.10.23 — suivi GPS robuste + trace visible + réseau PWA fiabilisé */
 (() => {
   'use strict';
 
@@ -9,6 +9,9 @@
   let activityPersistWarned = false;
   let pwaHiddenAt = 0;
   let lastPwaResumeNoticeAt = 0;
+  let lastInternetProbeAt = 0;
+  let lastInternetProbeOk = null;
+  let internetProbePromise = null;
   const VALHALLA_ROUTE_URL = 'https://valhalla1.openstreetmap.de/route';
   const OVERPASS_ENDPOINTS = [
     'https://overpass.private.coffee/api/interpreter',
@@ -376,6 +379,25 @@
     return true;
   }
 
+  function enableGpsMapFollow({ raiseZoom = true } = {}) {
+    state.mapFollowGps = true;
+    state.centerOnNextLocation = !centerActiveGpsNow(raiseZoom);
+    updateNavigationControls();
+    try { applyAutomaticHeading(); } catch (_) {}
+  }
+
+  function keepGpsExactlyCentered() {
+    if (!['recording','paused'].includes(state.activity.status) || !state.location || !state.map) return;
+    state.mapFollowGps = true;
+    centerActiveGpsNow(false);
+    // leaflet-rotate peut recalculer son transform juste après setHeading.
+    // Un second recentrage à la frame suivante garantit que le point bleu reste
+    // réellement au centre du viewport.
+    requestAnimationFrame(() => {
+      if (['recording','paused'].includes(state.activity.status) && state.location) centerActiveGpsNow(false);
+    });
+  }
+
   function handleMapClick(e) {
     if (state.hikeFinder.active) {
       searchHikesAround({ lat: e.latlng.lat, lon: e.latlng.lng });
@@ -558,18 +580,24 @@
     ui.gpsBadge.textContent = `GPS : ±${Math.round(accuracy || 0)} m`;
     if (Number.isFinite(altitude)) ui.elevationNow.textContent = `${Math.round(altitude)} m`;
 
-    // Pendant une activité, le point bleu est TOUJOURS recentré par le GPS lui-même.
-    // Cette règle ne dépend ni de la boussole ni des gestes sur la carte.
+    // Activité en cours : la caméra suit chaque fix GPS, exactement comme la
+    // position utilisée pour enregistrer la trace. La rotation ne doit jamais
+    // pouvoir faire dériver le point bleu hors du centre.
     if (['recording','paused'].includes(state.activity.status)) {
       state.mapFollowGps = true;
+      state.centerOnNextLocation = false;
+      centerActiveGpsNow(true);
+    } else if (state.centerOnNextLocation) {
       state.map.setView(ll, Math.max(state.map.getZoom(), 15), { animate:false });
       state.centerOnNextLocation = false;
-    } else if (state.centerOnNextLocation) {
-      state.map.setView(ll, Math.max(state.map.getZoom(), 15));
-      state.centerOnNextLocation = false;
     }
-    // Une erreur du plugin de rotation ne doit jamais interrompre updateLocation.
-    try { applyAutomaticHeading(); updateNavigationControls(); } catch (_) {}
+    try {
+      applyAutomaticHeading();
+      updateNavigationControls();
+      keepGpsExactlyCentered();
+    } catch (_) {
+      keepGpsExactlyCentered();
+    }
 
     if (state.activity.status === 'recording') recordActivityPoint(state.location);
     if (state.activity.followRoute) updateRouteFollowGuide(state.location);
@@ -2933,7 +2961,7 @@
     ensureActivityUiTimer();
     persistActivitySnapshot(true);
 
-    state.mapFollowGps = true;
+    enableGpsMapFollow({ raiseZoom:false });
     state.centerOnNextLocation = true;
     startLocation(false, { restart:true });
 
@@ -3014,7 +3042,7 @@
     syncActivityMapPanel();
 
     if (snap.status === 'recording' || snap.status === 'paused') {
-      state.mapFollowGps = true;
+      enableGpsMapFollow({ raiseZoom:false });
       state.centerOnNextLocation = true;
       startLocation(false);
       setAlert('safe', '↻', 'Activité restaurée', `${getActivityProfile(mode).label} reprise après le rechargement de la page.`);
@@ -3063,9 +3091,7 @@
       : `${activityProfile.label} ${new Date().toLocaleString('fr-FR', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})}`;
     state.activity.line = L.polyline([], { color:'#fb7185', weight:5, opacity:.96 }).addTo(state.map);
     persistActivitySnapshot(true);
-    state.mapFollowGps = true;
-    if (state.location) centerActiveGpsNow(true);
-    else state.centerOnNextLocation = true;
+    enableGpsMapFollow({ raiseZoom:true });
     startLocation(false);
     if (state.location) recordActivityPoint(state.location, true);
     ensureActivityUiTimer();
@@ -3094,36 +3120,44 @@
     const accuracy = Number(loc.accuracy);
     if (!force && Number.isFinite(accuracy) && accuracy > 60) return;
 
+    const prev = state.activity.points[state.activity.points.length - 1];
+    let timestamp = Number(loc.timestamp);
+    if (!Number.isFinite(timestamp) || timestamp <= 0) timestamp = Date.now();
+    // Certains WebView/Chrome peuvent renvoyer deux fixes avec le même timestamp.
+    // On garde un temps monotone afin que le filtre de vitesse ne rejette pas toute la trace.
+    if (prev && timestamp <= Number(prev.timestamp || 0)) timestamp = Math.max(Date.now(), Number(prev.timestamp || 0) + 250);
+
     const p = {
-      lat: loc.lat,
-      lon: loc.lon,
+      lat: Number(loc.lat),
+      lon: Number(loc.lon),
       ele: Number.isFinite(loc.altitude) ? loc.altitude : null,
-      time: new Date(loc.timestamp || Date.now()).toISOString(),
-      timestamp: loc.timestamp || Date.now(),
+      time: new Date(timestamp).toISOString(),
+      timestamp,
       accuracy: Number.isFinite(accuracy) ? accuracy : null,
       breakBefore: false
     };
-    const prev = state.activity.points[state.activity.points.length - 1];
+    if (!Number.isFinite(p.lat) || !Number.isFinite(p.lon)) return;
+
     if (prev) {
       const d = haversine(prev, p);
-      const dt = Math.max(0.5, (p.timestamp - prev.timestamp) / 1000);
+      const dt = Math.max(0.25, (p.timestamp - Number(prev.timestamp || p.timestamp)) / 1000);
       const computedSpeed = (d / dt) * 3600;
       const profile = getActivityProfile();
-      const maxPlausible = profile.maxPlausible;
-      if (computedSpeed > maxPlausible) return;
 
-      // Comme dans l'APK : on garde des points rapprochés. Pour limiter la dérive
-      // à l'arrêt, on exige soit un petit déplacement, soit quelques secondes.
-      const minDistanceKm = profile.cycling ? 0.0025 : 0.0018; // ~2,5 m vélo / 1,8 m marche
-      const maxPointGapS = profile.cycling ? 3.0 : 4.0;
-      if (!force && d < minDistanceKm && dt < maxPointGapS) {
+      // Rejet uniquement des vrais sauts GPS. Un petit déplacement ne doit pas être
+      // perdu à cause d'un timestamp très rapproché : c'était une cause possible de
+      // trace vide dans la PWA.
+      if (!force && d > 0.05 && computedSpeed > profile.maxPlausible) return;
+
+      // Point par point : on ne supprime que les doublons quasi identiques.
+      if (!force && d < 0.0008 && dt < 2.5) {
         state.activity.currentSpeed = Number.isFinite(loc.speed) ? Math.max(0, loc.speed) : computedSpeed;
         updateActivityUI();
         return;
       }
 
-      // Si Chrome a été suspendu écran éteint/arrière-plan, on ne fabrique pas
-      // une grande ligne droite entre l'ancien point et le nouveau au réveil.
+      // Après une suspension de Chrome, ne jamais relier deux positions éloignées
+      // par une fausse ligne droite.
       if (!force && dt > 20 && d > 0.03) {
         p.breakBefore = true;
         state.activity.currentSpeed = Number.isFinite(loc.speed) ? Math.max(0, loc.speed) : 0;
@@ -3136,7 +3170,12 @@
     }
 
     state.activity.points.push(p);
+    if (!state.activity.line) {
+      state.activity.line = L.polyline([], { color:'#fb7185', weight:5, opacity:.96 }).addTo(state.map);
+    }
     state.activity.line.setLatLngs(activityTrackLatLngs());
+    state.activity.line.bringToFront?.();
+    state.locationMarker?.bringToFront?.();
     updateActivityUI();
     persistActivitySnapshot();
   }
@@ -3843,6 +3882,45 @@
     if (offlineUI.progressText) offlineUI.progressText.textContent = text;
   }
 
+  async function probeInternetAccess({ force = false } = {}) {
+    const now = Date.now();
+    if (!force && lastInternetProbeOk !== null && now - lastInternetProbeAt < 8000) return lastInternetProbeOk;
+    if (internetProbePromise) return internetProbePromise;
+    internetProbePromise = (async () => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 3500);
+      try {
+        // no-cors suffit ici : on vérifie uniquement qu'Internet répond réellement.
+        await fetch(`https://tile.openstreetmap.org/0/0/0.png?rr=${now}`, {
+          mode:'no-cors', cache:'no-store', signal:controller.signal
+        });
+        lastInternetProbeOk = true;
+      } catch (_) {
+        lastInternetProbeOk = false;
+      } finally {
+        clearTimeout(timer);
+        lastInternetProbeAt = Date.now();
+        internetProbePromise = null;
+      }
+      return lastInternetProbeOk;
+    })();
+    return internetProbePromise;
+  }
+
+  async function recoverOnlineMapIfPossible({ silent = true } = {}) {
+    if (state.offline.activePackage && state.offline.forced) return false;
+    const online = navigator.onLine || await probeInternetAccess({ force:true });
+    if (!online) return false;
+    if (state.offline.activePackage || document.getElementById('offlineMapStatus')) {
+      deactivateOfflineMap({ restoreOnline:true });
+      if (!silent) toast('Connexion retrouvée : carte en ligne réactivée.');
+    } else {
+      setOfflineMapStatusVisible(false);
+      document.querySelectorAll('[data-basemap]').forEach(btn => btn.disabled = false);
+    }
+    return true;
+  }
+
   function updateOfflineNetworkBadge() {
     if (!offlineUI.networkBadge) return;
     const off = !navigator.onLine || !!state.offline.activePackage;
@@ -4120,6 +4198,13 @@
   }
 
   async function handleOfflineNetworkLoss() {
+    // navigator.onLine peut brièvement passer à false lors d'un changement 4G/Wi-Fi
+    // ou du retour dans une PWA. On vérifie Internet avant de basculer la carte.
+    if (await probeInternetAccess({ force:true })) {
+      await recoverOnlineMapIfPossible({ silent:true });
+      updateOfflineNetworkBadge();
+      return;
+    }
     updateOfflineNetworkBadge();
     if (state.offline.activePackage) return;
     const pkg = await chooseOfflinePackageForCurrentPosition();
@@ -4127,8 +4212,6 @@
       activateOfflinePackage(pkg, { fit:false, forced:false });
       toast(`Mode hors ligne : ${pkg.name}`);
     } else {
-      // Ne pas effacer brutalement la carte déjà à l'écran : les tuiles déjà
-      // chargées/cachées peuvent rester visibles même sans réseau.
       freezeOnlineBaseForOffline();
       setOfflineMapStatusVisible(true);
       ui.radarPanel.classList.add('hidden');
@@ -4139,8 +4222,7 @@
   async function handleOnlineReturn() {
     updateOfflineNetworkBadge();
     if (state.offline.activePackage && state.offline.forced) return;
-    deactivateOfflineMap({ restoreOnline:true });
-    toast('Connexion retrouvée : carte en ligne réactivée.');
+    await recoverOnlineMapIfPossible({ silent:false });
   }
 
   function offlineFeatureSummary(features) {
@@ -4549,7 +4631,10 @@
       } else {
         // Une PWA Android peut geler ses timers et son watchPosition en arrière-plan.
         // Au retour au premier plan on relance explicitement les deux.
-        setTimeout(() => resumePwaActivityAfterForeground('visibility'), 80);
+        setTimeout(() => {
+          resumePwaActivityAfterForeground('visibility');
+          recoverOnlineMapIfPossible({ silent:true }).catch(() => {});
+        }, 80);
       }
     });
     window.addEventListener('pageshow', event => {
@@ -4560,7 +4645,7 @@
   }
 
   function registerSW() {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.22', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.23', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
   }
 
   function loadOptionalRotatePlugin() {
@@ -4592,8 +4677,16 @@
     updateActivityUI();
     if (activityRestored) syncActivityMapPanel();
     registerSW();
-    if (navigator.onLine) loadRadar(); else setTimeout(handleOfflineNetworkLoss, 250);
-    setTimeout(() => startLocation(true), 250);
+    if (navigator.onLine) {
+      setOfflineMapStatusVisible(false);
+      loadRadar();
+    } else {
+      // Laisse quelques instants au réseau mobile/PWA pour se réattacher avant
+      // d'afficher « Carte hors ligne ».
+      setTimeout(handleOfflineNetworkLoss, 1200);
+    }
+    setTimeout(() => startLocation(true), 120);
+    setTimeout(() => recoverOnlineMapIfPossible({ silent:true }).catch(() => {}), 1800);
   }
 
   bootstrap().catch(err => {

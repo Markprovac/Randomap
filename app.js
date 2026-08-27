@@ -1,4 +1,4 @@
-/* Rando Radar v1.10.23 — suivi GPS robuste + trace visible + réseau PWA fiabilisé */
+/* Rando Radar v1.10.24 — suivi caméra GPS identique à la version Capacitor */
 (() => {
   'use strict';
 
@@ -72,17 +72,19 @@
     accuracyCircle: null,
     watchId: null,
     centerOnNextLocation: false,
-    // Le suivi caméra est indépendant du démarrage du GPS. Une erreur de
-    // boussole/rotation ne doit jamais empêcher watchPosition de démarrer.
-    mapFollowGps: false,
+    // Même logique que l'APK Capacitor : bleu = caméra verrouillée sur le GPS.
+    // Un vrai glissement utilisateur déverrouille la caméra sans arrêter le GPS.
+    mapFollowGps: true,
     navigation: {
-      orientationMode: 'auto', // auto | north
+      orientationMode: 'auto', // auto | north | manual
       deviceHeading: null,
       deviceHeadingAt: 0,
       gpsHeading: null,
       orientationListening: false,
       orientationPermission: 'unknown',
-      rotateAvailable: false
+      rotateAvailable: false,
+      mapGestureActive: false,
+      mapGestureAt: 0
     },
     route: null,
     routeLine: null,
@@ -229,13 +231,48 @@
     state.baseLayers.topo.addTo(state.map);
 
     state.map.on('click', handleMapClick);
-    // Hors activité, un déplacement de carte reste libre. Pendant une activité,
-    // updateLocation recentre au prochain point GPS sans couper watchPosition.
+
+    // Même comportement que l'APK Capacitor : seuls les gestes réellement initiés
+    // par le doigt déverrouillent le suivi caméra. Les déplacements/rotations faits
+    // par le code ne doivent jamais éteindre le bouton GPS bleu.
+    const mapContainer = state.map.getContainer();
+    const markMapGestureStart = () => {
+      state.navigation.mapGestureActive = true;
+      state.navigation.mapGestureAt = Date.now();
+    };
+    const markMapGestureEnd = () => {
+      state.navigation.mapGestureActive = false;
+    };
+    if (window.PointerEvent) {
+      mapContainer.addEventListener('pointerdown', markMapGestureStart, { passive:true });
+      window.addEventListener('pointerup', markMapGestureEnd, { passive:true });
+      window.addEventListener('pointercancel', markMapGestureEnd, { passive:true });
+    } else {
+      mapContainer.addEventListener('touchstart', markMapGestureStart, { passive:true });
+      window.addEventListener('touchend', markMapGestureEnd, { passive:true });
+      window.addEventListener('touchcancel', markMapGestureEnd, { passive:true });
+      mapContainer.addEventListener('mousedown', markMapGestureStart, { passive:true });
+      window.addEventListener('mouseup', markMapGestureEnd, { passive:true });
+    }
+
     state.map.on('dragstart', () => {
-      if (!['recording','paused'].includes(state.activity.status)) state.mapFollowGps = false;
+      const userInitiated = state.navigation.mapGestureActive ||
+        (Date.now() - Number(state.navigation.mapGestureAt || 0) < 500);
+      if (!userInitiated || !state.mapFollowGps) return;
+      state.mapFollowGps = false;
+      stopAutomaticHeading();
       updateNavigationControls();
     });
-    if (state.navigation.rotateAvailable) state.map.on('rotate', updateCompassRose);
+
+    if (state.navigation.rotateAvailable) {
+      state.map.on('rotatestart', () => {
+        if (state.navigation.orientationMode !== 'auto') return;
+        state.navigation.orientationMode = 'manual';
+        stopAutomaticHeading();
+        updateNavigationControls();
+      });
+      state.map.on('rotate', updateCompassRose);
+    }
     updateNavigationControls();
   }
 
@@ -286,7 +323,7 @@
     try {
       if (!state.map || !state.mapFullscreen || !state.navigation.rotateAvailable) return;
       if (state.navigation.orientationMode !== 'auto') return;
-      if (!state.mapFollowGps && !['recording','paused'].includes(state.activity.status)) return;
+      if (!state.mapFollowGps) return;
       const heading = preferredNavigationHeading();
       if (heading == null || typeof state.map.setHeading !== 'function') return;
       state.map.setHeading(heading, { ease:0.18, deadzone:1.2 });
@@ -303,17 +340,30 @@
   }
 
   function updateNavigationControls() {
-    const active = ['recording','paused'].includes(state.activity.status);
-    ui.mapLocateBtn?.classList.toggle('following', active || state.mapFollowGps);
+    if (ui.mapLocateBtn) {
+      ui.mapLocateBtn.classList.toggle('following', !!state.mapFollowGps);
+      ui.mapLocateBtn.title = state.mapFollowGps
+        ? 'Position suivie · toucher pour recentrer'
+        : 'Reprendre le suivi de ma position';
+      ui.mapLocateBtn.setAttribute('aria-pressed', state.mapFollowGps ? 'true' : 'false');
+    }
     if (!ui.mapCompassBtn) return;
     const available = state.navigation.rotateAvailable;
     const mode = state.navigation.orientationMode;
     ui.mapCompassBtn.classList.toggle('auto', available && mode === 'auto');
     ui.mapCompassBtn.classList.toggle('north-locked', !available || mode === 'north');
+    ui.mapCompassBtn.classList.toggle('manual', available && mode === 'manual');
+    ui.mapCompassBtn.classList.toggle('follow-paused', !state.mapFollowGps);
     ui.mapCompassBtn.classList.toggle('rotate-unavailable', !available);
     const label = ui.mapCompassBtn.querySelector('.compass-mode');
-    if (label) label.textContent = available ? (mode === 'auto' ? 'AUTO' : 'N') : 'N';
-    const title = !available ? 'Nord fixe · rotation indisponible' : (mode === 'auto' ? 'Orientation automatique · toucher pour verrouiller le Nord' : 'Nord verrouillé · toucher pour orientation automatique');
+    if (label) label.textContent = !available ? 'N' : (mode === 'auto' ? 'AUTO' : (mode === 'north' ? 'N' : 'MAN'));
+    const title = !available
+      ? 'Nord fixe · rotation indisponible'
+      : (mode === 'auto'
+          ? 'Orientation automatique active · toucher pour verrouiller le Nord'
+          : (mode === 'north'
+              ? 'Nord verrouillé · toucher pour orientation automatique'
+              : 'Orientation manuelle · toucher pour revenir en automatique'));
     ui.mapCompassBtn.title = title;
     ui.mapCompassBtn.setAttribute('aria-label', title);
     ui.mapCompassBtn.setAttribute('aria-pressed', available && mode === 'auto' ? 'true' : 'false');
@@ -386,18 +436,6 @@
     try { applyAutomaticHeading(); } catch (_) {}
   }
 
-  function keepGpsExactlyCentered() {
-    if (!['recording','paused'].includes(state.activity.status) || !state.location || !state.map) return;
-    state.mapFollowGps = true;
-    centerActiveGpsNow(false);
-    // leaflet-rotate peut recalculer son transform juste après setHeading.
-    // Un second recentrage à la frame suivante garantit que le point bleu reste
-    // réellement au centre du viewport.
-    requestAnimationFrame(() => {
-      if (['recording','paused'].includes(state.activity.status) && state.location) centerActiveGpsNow(false);
-    });
-  }
-
   function handleMapClick(e) {
     if (state.hikeFinder.active) {
       searchHikesAround({ lat: e.latlng.lat, lon: e.latlng.lng });
@@ -429,7 +467,7 @@
     ensureOrientationTracking(false).catch(() => {});
     setTimeout(() => {
       state.map.invalidateSize();
-      if (['recording','paused'].includes(state.activity.status) && state.location) centerActiveGpsNow(false);
+      if (state.mapFollowGps && state.location) centerActiveGpsNow(false);
       applyAutomaticHeading();
       updateNavigationControls();
     }, 50);
@@ -522,19 +560,19 @@
   }
 
   function startLocation(center = true, { restart = false } = {}) {
+    // Même comportement caméra que l'APK Capacitor. Le GPS Web reste la source
+    // des points dans la PWA, mais le verrouillage/déverrouillage de la carte est identique.
+    if (center) {
+      enableGpsMapFollow({ raiseZoom:true });
+      ensureOrientationTracking(false).catch(() => {});
+    }
+
     // GPS PWA « point par point » : chaque nouvelle position fournie par Chrome
     // est traitée immédiatement. maximumAge=0 évite de reprendre un vieux point
     // mis en cache. La fréquence réelle reste toutefois décidée par Android/Chrome.
     if (!('geolocation' in navigator)) {
       toast('La géolocalisation n’est pas disponible sur cet appareil.');
       return;
-    }
-
-    if (center && state.location) {
-      state.map.setView([state.location.lat, state.location.lon], Math.max(state.map.getZoom(), 15), { animate:false });
-      state.centerOnNextLocation = false;
-    } else if (center) {
-      state.centerOnNextLocation = true;
     }
 
     if (restart && state.watchId !== null) {
@@ -580,24 +618,14 @@
     ui.gpsBadge.textContent = `GPS : ±${Math.round(accuracy || 0)} m`;
     if (Number.isFinite(altitude)) ui.elevationNow.textContent = `${Math.round(altitude)} m`;
 
-    // Activité en cours : la caméra suit chaque fix GPS, exactement comme la
-    // position utilisée pour enregistrer la trace. La rotation ne doit jamais
-    // pouvoir faire dériver le point bleu hors du centre.
-    if (['recording','paused'].includes(state.activity.status)) {
-      state.mapFollowGps = true;
-      state.centerOnNextLocation = false;
-      centerActiveGpsNow(true);
-    } else if (state.centerOnNextLocation) {
-      state.map.setView(ll, Math.max(state.map.getZoom(), 15), { animate:false });
+    // Identique à l'APK : si le bouton GPS est bleu, chaque fix recentre.
+    // Si l'utilisateur a déplacé la carte, le GPS continue mais la caméra reste libre.
+    if (state.mapFollowGps || state.centerOnNextLocation) {
+      centerActiveGpsNow(state.centerOnNextLocation);
       state.centerOnNextLocation = false;
     }
-    try {
-      applyAutomaticHeading();
-      updateNavigationControls();
-      keepGpsExactlyCentered();
-    } catch (_) {
-      keepGpsExactlyCentered();
-    }
+    try { applyAutomaticHeading(); } catch (_) {}
+    updateNavigationControls();
 
     if (state.activity.status === 'recording') recordActivityPoint(state.location);
     if (state.activity.followRoute) updateRouteFollowGuide(state.location);
@@ -3101,7 +3129,7 @@
       toast(`Parcours démarré : ${routeToFollow.name}`);
       setTimeout(() => { if (!state.location && state.routeLine) state.map.fitBounds(state.routeLine.getBounds(), { padding: [34, 34] }); else if (state.location) centerActiveGpsNow(true); }, 100);
     } else {
-      setAlert('safe', '▶️', 'Activité en cours', 'La trace GPS est enregistrée et ta position reste centrée sur la carte.');
+      setAlert('safe', '▶️', 'Activité en cours', 'La trace GPS est enregistrée. Bouton GPS bleu = position suivie ; déplace la carte pour la libérer.');
       toast('Enregistrement GPS démarré.');
     }
 
@@ -3336,7 +3364,7 @@
       ui.activityExportBtn.classList.add('hidden');
       ui.activityHelp.textContent = a.status === 'paused'
         ? 'Activité en pause.'
-        : (a.followRoute ? `Suivi du GPX « ${a.followRoute.name} » en cours.` : 'Enregistrement GPS en cours. Le déplacement de la carte ne coupe pas le suivi.');
+        : (a.followRoute ? `Suivi du GPX « ${a.followRoute.name} » en cours.` : 'Enregistrement GPS en cours. Déplace la carte pour libérer le centrage ; ◎ pour le reprendre.');
     }
 
     ui.activityMapTitle.textContent = `${activityProfile.icon} ${activityProfile.label}`;
@@ -4424,10 +4452,8 @@
     ui.locateBtn.addEventListener('click', () => startLocation(true));
     ui.mapLocateBtn.addEventListener('click', e => {
       e.stopPropagation();
-      if (['recording','paused'].includes(state.activity.status)) state.mapFollowGps = true;
       startLocation(true);
-      ensureOrientationTracking(true).catch(() => {});
-      updateNavigationControls();
+      ensureOrientationTracking(true).then(() => applyAutomaticHeading()).catch(() => {});
     });
     ui.mapCompassBtn?.addEventListener('click', async e => {
       e.stopPropagation();
@@ -4645,7 +4671,7 @@
   }
 
   function registerSW() {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.23', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.24', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
   }
 
   function loadOptionalRotatePlugin() {

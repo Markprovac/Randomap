@@ -1528,6 +1528,16 @@ body.pull-refresh-allowed {
 @media(max-width:900px){.planner-head{padding-right:48px}.planner-close-btn{width:42px;height:42px}}
 
 
+
+/* V1.10.24 — état du bouton GPS identique à l'APK Capacitor */
+.map-locate-btn.following{
+  background:rgba(235,249,246,.98);
+  border-color:rgba(16,185,129,.45);
+  box-shadow:0 0 0 3px rgba(16,185,129,.12),0 8px 22px rgba(20,32,51,.17);
+  color:#0f8f74;
+}
+.map-locate-btn:not(.following){color:#607082}
+
 /* =========================================================
    V1.10.21 — ergonomie carte portée sans toucher au moteur GPS
    La géolocalisation/offline reste celle de la base PWA 1.10.17.

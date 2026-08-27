@@ -76,3 +76,10 @@ V1.10.23 — correction terrain PWA
 - timestamps GPS non monotones tolérés pour éviter une trace vide
 - vérification réseau réelle avant activation du mode Carte hors ligne
 - retour au premier plan : tentative automatique de réactivation de la carte en ligne
+
+
+V1.10.24 — verrouillage caméra GPS identique à l'APK Capacitor
+- Bouton GPS coloré = mapFollowGps actif, la carte suit chaque nouvelle position.
+- Un vrai glissement du doigt sur la carte désactive uniquement le suivi caméra, pas le GPS ni l'enregistrement de la trace.
+- Le bouton GPS réactive le suivi, recentre immédiatement et reprend l'orientation automatique si le mode AUTO est sélectionné.
+- Les déplacements/rotations déclenchés par le code ne désactivent plus accidentellement le suivi.

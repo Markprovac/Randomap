@@ -1600,3 +1600,22 @@ body.pull-refresh-allowed {
   .finder-map-detail{left:8px!important;right:8px!important;padding-top:27px!important}
   .finder-map-detail.collapsed{max-height:92px!important}
 }
+
+
+/* V1.10.25 — point rouge altitude/progression aligné avec la carte tournée.
+   Même famille de marker DOM que le GPS bleu, comme dans l'APK Capacitor. */
+.rr-red-map-point-wrap{
+  background:transparent !important;
+  border:0 !important;
+}
+.rr-red-map-point{
+  display:block;
+  width:18px;
+  height:18px;
+  margin:2px;
+  border-radius:50%;
+  background:#e11d48;
+  border:3px solid #fff;
+  box-shadow:0 2px 8px rgba(20,32,51,.34);
+  box-sizing:border-box;
+}

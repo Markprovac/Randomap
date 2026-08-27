@@ -83,3 +83,10 @@ V1.10.24 — verrouillage caméra GPS identique à l'APK Capacitor
 - Un vrai glissement du doigt sur la carte désactive uniquement le suivi caméra, pas le GPS ni l'enregistrement de la trace.
 - Le bouton GPS réactive le suivi, recentre immédiatement et reprend l'orientation automatique si le mode AUTO est sélectionné.
 - Les déplacements/rotations déclenchés par le code ne désactivent plus accidentellement le suivi.
+
+
+V1.10.25 — correction du point rouge altitude/progression avec carte tournée
+- reprise du correctif déjà utilisé dans l'APK Capacitor ;
+- le marqueur rouge du profil altimétrique utilise maintenant L.marker + divIcon ;
+- le point reste géographiquement collé au tracé même lorsque la carte est orientée/rotée ;
+- même correction pour le point rouge de progression lors du suivi d'un parcours.

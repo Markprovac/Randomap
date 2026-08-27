@@ -1,4 +1,4 @@
-/* Rando Radar v1.10.24 — suivi caméra GPS identique à la version Capacitor */
+/* Rando Radar v1.10.25 — marqueurs altitude/progression alignés avec la rotation */
 (() => {
   'use strict';
 
@@ -1534,12 +1534,24 @@
     });
   }
 
+  function redMapPointIcon() {
+    return L.divIcon({
+      className: 'rr-red-map-point-wrap',
+      html: '<span class="rr-red-map-point"></span>',
+      iconSize: [22, 22],
+      iconAnchor: [11, 11]
+    });
+  }
+
   function showElevationPointOnMap(point) {
     if (!state.map || !point || !Number.isFinite(point.lat) || !Number.isFinite(point.lon)) return;
+    const ll = [Number(point.lat), Number(point.lon)];
+    // Comme dans l'APK Capacitor : un vrai L.marker est recalculé correctement
+    // par leaflet-rotate. Un circleMarker SVG pouvait se décaler du tracé.
     if (!state.elevationHoverMarker) {
-      state.elevationHoverMarker = L.circleMarker([point.lat, point.lon], { radius: 8, color: '#fff', weight: 3, fillColor: '#e11d48', fillOpacity: 1, pane: 'markerPane' }).addTo(state.map);
-    } else state.elevationHoverMarker.setLatLng([point.lat, point.lon]);
-    state.elevationHoverMarker.bindTooltip(`${Math.round(Number(point.ele) || 0)} m`, { direction:'top', offset:[0,-8] }).openTooltip();
+      state.elevationHoverMarker = L.marker(ll, { icon: redMapPointIcon(), zIndexOffset: 1200, interactive: false }).addTo(state.map);
+    } else state.elevationHoverMarker.setLatLng(ll);
+    state.elevationHoverMarker.bindTooltip(`${Math.round(Number(point.ele) || 0)} m`, { direction:'top', offset:[0,-10] }).openTooltip();
   }
 
   function updateElevationChartProgress(chartKey, ratio) {
@@ -3501,7 +3513,7 @@
     if (rp && Number.isFinite(Number(rp.lat)) && Number.isFinite(Number(rp.lon))) {
       const rll = [Number(rp.lat), Number(rp.lon)];
       if (!state.activity.routeProgressMarker) {
-        state.activity.routeProgressMarker = L.circleMarker(rll, { radius:8, color:'#fff', weight:3, fillColor:'#e11d48', fillOpacity:1, pane:'markerPane' }).addTo(state.map);
+        state.activity.routeProgressMarker = L.marker(rll, { icon:redMapPointIcon(), zIndexOffset:1200, interactive:false }).addTo(state.map);
       } else state.activity.routeProgressMarker.setLatLng(rll);
       const altTxt = hasElevation(rp.ele) ? ` · ${Math.round(Number(rp.ele))} m` : '';
       state.activity.routeProgressMarker.bindTooltip(`${Math.round(progress)} %${altTxt}`, { direction:'top', offset:[0,-8] });
@@ -4671,7 +4683,7 @@
   }
 
   function registerSW() {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.24', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.25', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
   }
 
   function loadOptionalRotatePlugin() {

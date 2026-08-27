@@ -1,4 +1,4 @@
-/* Rando Radar v1.10.20 — centrage GPS continu pendant activité */
+/* Rando Radar v1.10.22 — GPS PWA point par point + reprise après retour au premier plan */
 (() => {
   'use strict';
 
@@ -7,6 +7,8 @@
   const ACTIVE_ACTIVITY_KEY = 'randoRadar.activeActivity.v1';
   let lastActivityPersistAt = 0;
   let activityPersistWarned = false;
+  let pwaHiddenAt = 0;
+  let lastPwaResumeNoticeAt = 0;
   const VALHALLA_ROUTE_URL = 'https://valhalla1.openstreetmap.de/route';
   const OVERPASS_ENDPOINTS = [
     'https://overpass.private.coffee/api/interpreter',
@@ -67,16 +69,17 @@
     accuracyCircle: null,
     watchId: null,
     centerOnNextLocation: false,
-    mapFollowGps: true,
+    // Le suivi caméra est indépendant du démarrage du GPS. Une erreur de
+    // boussole/rotation ne doit jamais empêcher watchPosition de démarrer.
+    mapFollowGps: false,
     navigation: {
-      orientationMode: 'auto', // auto | north | manual
+      orientationMode: 'auto', // auto | north
       deviceHeading: null,
       deviceHeadingAt: 0,
       gpsHeading: null,
       orientationListening: false,
       orientationPermission: 'unknown',
-      mapGestureActive: false,
-      mapGestureAt: 0
+      rotateAvailable: false
     },
     route: null,
     routeLine: null,
@@ -204,18 +207,12 @@
   }
 
   function initMap() {
-    // leaflet-rotate est chargé séparément dans index.html. Si le CDN est
-    // momentanément indisponible, Leaflet ignore simplement ces options et la
-    // carte reste utilisable en orientation Nord classique.
-    state.map = L.map('map', {
-      zoomControl: false,
-      preferCanvas: true,
-      tap: true,
-      rotate: true,
-      bearing: 0,
-      touchRotate: true,
-      rotateControl: false
-    }).setView([44.2, 6.7], 8);
+    state.navigation.rotateAvailable = !!(L?.Map?.prototype && typeof L.Map.prototype.setBearing === 'function');
+    const mapOptions = { zoomControl: false, preferCanvas: true, tap: true };
+    if (state.navigation.rotateAvailable) Object.assign(mapOptions, {
+      rotate: true, bearing: 0, touchRotate: true, rotateControl: false
+    });
+    state.map = L.map('map', mapOptions).setView([44.2, 6.7], 8);
     L.control.zoom({ position: 'bottomright' }).addTo(state.map);
 
     state.baseLayers.topo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
@@ -229,47 +226,154 @@
     state.baseLayers.topo.addTo(state.map);
 
     state.map.on('click', handleMapClick);
-
-    // Seul un vrai geste utilisateur suspend le suivi de la caméra. Les
-    // rotations automatiques ne doivent pas faire perdre le centrage GPS.
-    const mapContainer = state.map.getContainer();
-    const markMapGestureStart = () => {
-      state.navigation.mapGestureActive = true;
-      state.navigation.mapGestureAt = Date.now();
-    };
-    const markMapGestureEnd = () => { state.navigation.mapGestureActive = false; };
-    if (window.PointerEvent) {
-      mapContainer.addEventListener('pointerdown', markMapGestureStart, { passive:true });
-      window.addEventListener('pointerup', markMapGestureEnd, { passive:true });
-      window.addEventListener('pointercancel', markMapGestureEnd, { passive:true });
-    } else {
-      mapContainer.addEventListener('touchstart', markMapGestureStart, { passive:true });
-      window.addEventListener('touchend', markMapGestureEnd, { passive:true });
-      window.addEventListener('touchcancel', markMapGestureEnd, { passive:true });
-      mapContainer.addEventListener('mousedown', markMapGestureStart, { passive:true });
-      window.addEventListener('mouseup', markMapGestureEnd, { passive:true });
-    }
-
+    // Hors activité, un déplacement de carte reste libre. Pendant une activité,
+    // updateLocation recentre au prochain point GPS sans couper watchPosition.
     state.map.on('dragstart', () => {
-      const userInitiated = state.navigation.mapGestureActive || (Date.now() - Number(state.navigation.mapGestureAt || 0) < 500);
-      if (!userInitiated || !state.mapFollowGps) return;
-      // Pendant une activité, la position GPS doit rester au centre de la carte.
-      // On laisse l'utilisateur déplacer momentanément la carte, mais le prochain
-      // point GPS recentre automatiquement la vue au lieu de couper le suivi.
-      if (['recording','paused'].includes(state.activity.status)) return;
-      state.mapFollowGps = false;
-      stopAutomaticHeading();
+      if (!['recording','paused'].includes(state.activity.status)) state.mapFollowGps = false;
       updateNavigationControls();
     });
-
-    state.map.on('rotatestart', () => {
-      if (state.navigation.orientationMode !== 'auto') return;
-      state.navigation.orientationMode = 'manual';
-      stopAutomaticHeading();
-      updateNavigationControls();
-    });
-    state.map.on('rotate', updateCompassRose);
+    if (state.navigation.rotateAvailable) state.map.on('rotate', updateCompassRose);
     updateNavigationControls();
+  }
+
+  function normalizeHeading(deg) {
+    const n = Number(deg);
+    return Number.isFinite(n) ? ((n % 360) + 360) % 360 : null;
+  }
+
+  function screenOrientationAngle() {
+    try {
+      const value = globalThis.screen?.orientation?.angle ?? globalThis.orientation ?? 0;
+      const angle = Number(value);
+      return Number.isFinite(angle) ? angle : 0;
+    } catch (_) { return 0; }
+  }
+
+  function headingFromOrientationEvent(event) {
+    if (!event) return null;
+    if (Number.isFinite(Number(event.webkitCompassHeading))) {
+      return normalizeHeading(Number(event.webkitCompassHeading) + screenOrientationAngle());
+    }
+    if ((event.absolute === true || event.type === 'deviceorientationabsolute') && Number.isFinite(Number(event.alpha))) {
+      return normalizeHeading(360 - Number(event.alpha) + screenOrientationAngle());
+    }
+    return null;
+  }
+
+  function preferredNavigationHeading() {
+    const gps = normalizeHeading(state.navigation.gpsHeading);
+    const speed = Number(state.location?.speed);
+    if (gps != null && Number.isFinite(speed) && speed >= 3) return gps;
+    const fresh = Date.now() - Number(state.navigation.deviceHeadingAt || 0) < 2500;
+    const device = normalizeHeading(state.navigation.deviceHeading);
+    return fresh && device != null ? device : gps;
+  }
+
+  function stopAutomaticHeading() {
+    if (!state.map || !state.navigation.rotateAvailable) return;
+    try {
+      if (typeof state.map.setHeading === 'function') state.map.setHeading(null);
+      else if (typeof state.map.stopHeadingUp === 'function') state.map.stopHeadingUp();
+    } catch (_) {}
+  }
+
+  function applyAutomaticHeading() {
+    // Cette fonction est volontairement "best effort" : une panne de capteur ou
+    // du plugin de rotation ne peut jamais casser le GPS ni la carte.
+    try {
+      if (!state.map || !state.mapFullscreen || !state.navigation.rotateAvailable) return;
+      if (state.navigation.orientationMode !== 'auto') return;
+      if (!state.mapFollowGps && !['recording','paused'].includes(state.activity.status)) return;
+      const heading = preferredNavigationHeading();
+      if (heading == null || typeof state.map.setHeading !== 'function') return;
+      state.map.setHeading(heading, { ease:0.18, deadzone:1.2 });
+    } catch (err) { console.warn('Orientation carte ignorée', err); }
+  }
+
+  function updateCompassRose() {
+    if (!ui.mapCompassBtn) return;
+    try {
+      const rose = ui.mapCompassBtn.querySelector('.compass-rose');
+      const bearing = typeof state.map?.getBearing === 'function' ? Number(state.map.getBearing()) || 0 : 0;
+      if (rose) rose.style.transform = `rotate(${bearing}deg)`;
+    } catch (_) {}
+  }
+
+  function updateNavigationControls() {
+    const active = ['recording','paused'].includes(state.activity.status);
+    ui.mapLocateBtn?.classList.toggle('following', active || state.mapFollowGps);
+    if (!ui.mapCompassBtn) return;
+    const available = state.navigation.rotateAvailable;
+    const mode = state.navigation.orientationMode;
+    ui.mapCompassBtn.classList.toggle('auto', available && mode === 'auto');
+    ui.mapCompassBtn.classList.toggle('north-locked', !available || mode === 'north');
+    ui.mapCompassBtn.classList.toggle('rotate-unavailable', !available);
+    const label = ui.mapCompassBtn.querySelector('.compass-mode');
+    if (label) label.textContent = available ? (mode === 'auto' ? 'AUTO' : 'N') : 'N';
+    const title = !available ? 'Nord fixe · rotation indisponible' : (mode === 'auto' ? 'Orientation automatique · toucher pour verrouiller le Nord' : 'Nord verrouillé · toucher pour orientation automatique');
+    ui.mapCompassBtn.title = title;
+    ui.mapCompassBtn.setAttribute('aria-label', title);
+    ui.mapCompassBtn.setAttribute('aria-pressed', available && mode === 'auto' ? 'true' : 'false');
+    updateCompassRose();
+  }
+
+  function setOrientationMode(mode, { notify = false } = {}) {
+    const next = mode === 'auto' ? 'auto' : 'north';
+    state.navigation.orientationMode = next;
+    stopAutomaticHeading();
+    if (!state.navigation.rotateAvailable) {
+      state.navigation.orientationMode = 'north';
+      updateNavigationControls();
+      if (notify) toast('🧭 Nord fixe : rotation automatique indisponible.');
+      return;
+    }
+    try {
+      if (state.navigation.orientationMode === 'north') {
+        state.map?.touchRotate?.disable?.();
+        if (typeof state.map?.setBearing === 'function') state.map.setBearing(0);
+        if (notify) toast('🧭 Nord verrouillé.');
+      } else {
+        state.map?.touchRotate?.enable?.();
+        applyAutomaticHeading();
+        if (notify) toast('🧭 Orientation automatique activée.');
+      }
+    } catch (err) { console.warn('Changement orientation ignoré', err); }
+    updateNavigationControls();
+  }
+
+  async function ensureOrientationTracking(fromUserGesture = false) {
+    try {
+      if (state.navigation.orientationListening) return true;
+      if (!state.navigation.rotateAvailable || !('DeviceOrientationEvent' in window)) return false;
+      const requestPermission = window.DeviceOrientationEvent?.requestPermission;
+      if (typeof requestPermission === 'function' && state.navigation.orientationPermission !== 'granted') {
+        if (!fromUserGesture) return false;
+        const result = await requestPermission.call(window.DeviceOrientationEvent);
+        state.navigation.orientationPermission = result;
+        if (result !== 'granted') return false;
+      } else state.navigation.orientationPermission = 'granted';
+      const handle = event => {
+        const heading = headingFromOrientationEvent(event);
+        if (heading == null) return;
+        state.navigation.deviceHeading = heading;
+        state.navigation.deviceHeadingAt = Date.now();
+        applyAutomaticHeading();
+      };
+      window.addEventListener('deviceorientationabsolute', handle, true);
+      window.addEventListener('deviceorientation', handle, true);
+      state.navigation.orientationListening = true;
+      return true;
+    } catch (err) {
+      console.warn('Capteur orientation indisponible', err);
+      return false;
+    }
+  }
+
+  function centerActiveGpsNow(raiseZoom = false) {
+    if (!state.location || !state.map) return false;
+    const zoom = raiseZoom ? Math.max(state.map.getZoom(), 15) : state.map.getZoom();
+    state.map.setView([state.location.lat, state.location.lon], zoom, { animate:false });
+    return true;
   }
 
   function handleMapClick(e) {
@@ -299,10 +403,11 @@
     ui.mapCompassBtn?.classList.remove('hidden');
     ui.mapZoomControls.classList.remove('hidden');
     syncActivityMapPanel();
+    // Orientation facultative : jamais dans le chemin critique du GPS.
     ensureOrientationTracking(false).catch(() => {});
     setTimeout(() => {
       state.map.invalidateSize();
-      if (state.mapFollowGps && state.location) centerMapOnLocation(false);
+      if (['recording','paused'].includes(state.activity.status) && state.location) centerActiveGpsNow(false);
       applyAutomaticHeading();
       updateNavigationControls();
     }, 50);
@@ -317,145 +422,9 @@
     ui.mapCompassBtn?.classList.add('hidden');
     ui.mapZoomControls.classList.add('hidden');
     stopAutomaticHeading();
-    if (typeof state.map?.setBearing === 'function') state.map.setBearing(0);
-    if (state.navigation.orientationMode === 'manual') state.navigation.orientationMode = 'north';
+    try { if (typeof state.map?.setBearing === 'function') state.map.setBearing(0); } catch (_) {}
     syncActivityMapPanel();
-    setTimeout(() => { state.map.invalidateSize(); updateNavigationControls(); }, 50);
-  }
-
-  function normalizeHeading(deg) {
-    const n = Number(deg);
-    return Number.isFinite(n) ? ((n % 360) + 360) % 360 : null;
-  }
-
-  function screenOrientationAngle() {
-    const angle = Number(screen?.orientation?.angle ?? window.orientation ?? 0);
-    return Number.isFinite(angle) ? angle : 0;
-  }
-
-  function headingFromOrientationEvent(event) {
-    if (!event) return null;
-    if (Number.isFinite(Number(event.webkitCompassHeading))) {
-      return normalizeHeading(Number(event.webkitCompassHeading) + screenOrientationAngle());
-    }
-    if ((event.absolute === true || event.type === 'deviceorientationabsolute') && Number.isFinite(Number(event.alpha))) {
-      return normalizeHeading(360 - Number(event.alpha) + screenOrientationAngle());
-    }
-    return null;
-  }
-
-  function preferredNavigationHeading() {
-    const gpsHeading = normalizeHeading(state.navigation.gpsHeading);
-    const speed = Number(state.location?.speed);
-    if (gpsHeading != null && Number.isFinite(speed) && speed >= 3) return gpsHeading;
-    const deviceFresh = Date.now() - Number(state.navigation.deviceHeadingAt || 0) < 2500;
-    const deviceHeading = normalizeHeading(state.navigation.deviceHeading);
-    if (deviceFresh && deviceHeading != null) return deviceHeading;
-    return gpsHeading;
-  }
-
-  function stopAutomaticHeading() {
-    if (!state.map) return;
-    if (typeof state.map.setHeading === 'function') state.map.setHeading(null);
-    else if (typeof state.map.stopHeadingUp === 'function') state.map.stopHeadingUp();
-  }
-
-  function applyAutomaticHeading() {
-    if (!state.map || !state.mapFullscreen || !state.mapFollowGps) return;
-    if (state.navigation.orientationMode !== 'auto') return;
-    const heading = preferredNavigationHeading();
-    if (heading == null || typeof state.map.setHeading !== 'function') return;
-    state.map.setHeading(heading, { ease:0.18, deadzone:1.2 });
-  }
-
-  function updateCompassRose() {
-    if (!ui.mapCompassBtn) return;
-    const rose = ui.mapCompassBtn.querySelector('.compass-rose');
-    const bearing = typeof state.map?.getBearing === 'function' ? Number(state.map.getBearing()) || 0 : 0;
-    if (rose) rose.style.transform = `rotate(${bearing}deg)`;
-  }
-
-  function updateNavigationControls() {
-    if (ui.mapLocateBtn) {
-      ui.mapLocateBtn.classList.toggle('following', !!state.mapFollowGps);
-      ui.mapLocateBtn.title = state.mapFollowGps ? 'Position suivie · toucher pour recentrer' : 'Reprendre le suivi de ma position';
-    }
-    if (!ui.mapCompassBtn) return;
-    const mode = state.navigation.orientationMode;
-    ui.mapCompassBtn.classList.toggle('auto', mode === 'auto');
-    ui.mapCompassBtn.classList.toggle('north-locked', mode === 'north');
-    ui.mapCompassBtn.classList.toggle('manual', mode === 'manual');
-    ui.mapCompassBtn.classList.toggle('follow-paused', !state.mapFollowGps);
-    const label = ui.mapCompassBtn.querySelector('.compass-mode');
-    if (label) label.textContent = mode === 'auto' ? 'AUTO' : (mode === 'north' ? 'N' : 'MAN');
-    const title = mode === 'auto'
-      ? 'Orientation automatique active · toucher pour verrouiller le Nord'
-      : (mode === 'north' ? 'Nord verrouillé · toucher pour orientation automatique' : 'Orientation manuelle · toucher pour revenir en automatique');
-    ui.mapCompassBtn.title = title;
-    ui.mapCompassBtn.setAttribute('aria-label', title);
-    ui.mapCompassBtn.setAttribute('aria-pressed', mode === 'auto' ? 'true' : 'false');
-    updateCompassRose();
-  }
-
-  function setOrientationMode(mode, { notify = false } = {}) {
-    const next = ['auto','north','manual'].includes(mode) ? mode : 'north';
-    state.navigation.orientationMode = next;
-    stopAutomaticHeading();
-    if (next === 'north') {
-      try { state.map?.touchRotate?.disable?.(); } catch (_) {}
-      if (typeof state.map?.setBearing === 'function') state.map.setBearing(0);
-      if (notify) toast('🧭 Nord verrouillé · la carte ne tourne plus toute seule.');
-    } else {
-      try { state.map?.touchRotate?.enable?.(); } catch (_) {}
-      if (next === 'auto') {
-        applyAutomaticHeading();
-        if (notify) toast('🧭 Orientation automatique activée.');
-      }
-    }
-    updateNavigationControls();
-  }
-
-  function centerMapOnLocation(raiseZoom = false) {
-    if (!state.location || !state.map) return false;
-    const ll = [state.location.lat, state.location.lon];
-    const currentZoom = state.map.getZoom();
-    const zoom = raiseZoom ? Math.max(currentZoom, 15) : currentZoom;
-    state.map.setView(ll, zoom, { animate:false });
-    return true;
-  }
-
-  function enableGpsMapFollow({ raiseZoom = true } = {}) {
-    state.mapFollowGps = true;
-    state.centerOnNextLocation = !centerMapOnLocation(raiseZoom);
-    updateNavigationControls();
-    applyAutomaticHeading();
-  }
-
-  async function ensureOrientationTracking(fromUserGesture = false) {
-    if (state.navigation.orientationListening) return true;
-    if (!('DeviceOrientationEvent' in window)) return false;
-    const requestPermission = window.DeviceOrientationEvent?.requestPermission;
-    if (typeof requestPermission === 'function' && state.navigation.orientationPermission !== 'granted') {
-      if (!fromUserGesture) return false;
-      try {
-        const result = await requestPermission.call(window.DeviceOrientationEvent);
-        state.navigation.orientationPermission = result;
-        if (result !== 'granted') return false;
-      } catch (_) { return false; }
-    } else {
-      state.navigation.orientationPermission = 'granted';
-    }
-    const handle = event => {
-      const heading = headingFromOrientationEvent(event);
-      if (heading == null) return;
-      state.navigation.deviceHeading = heading;
-      state.navigation.deviceHeadingAt = Date.now();
-      applyAutomaticHeading();
-    };
-    window.addEventListener('deviceorientationabsolute', handle, true);
-    window.addEventListener('deviceorientation', handle, true);
-    state.navigation.orientationListening = true;
-    return true;
+    setTimeout(() => state.map.invalidateSize(), 50);
   }
 
   function switchBase(name) {
@@ -530,24 +499,36 @@
     }, 650);
   }
 
-  function startLocation(center = true) {
-    if (center) {
-      enableGpsMapFollow({ raiseZoom:true });
-      ensureOrientationTracking(false).catch(() => {});
-    }
+  function startLocation(center = true, { restart = false } = {}) {
+    // GPS PWA « point par point » : chaque nouvelle position fournie par Chrome
+    // est traitée immédiatement. maximumAge=0 évite de reprendre un vieux point
+    // mis en cache. La fréquence réelle reste toutefois décidée par Android/Chrome.
     if (!('geolocation' in navigator)) {
       toast('La géolocalisation n’est pas disponible sur cet appareil.');
       return;
     }
+
+    if (center && state.location) {
+      state.map.setView([state.location.lat, state.location.lon], Math.max(state.map.getZoom(), 15), { animate:false });
+      state.centerOnNextLocation = false;
+    } else if (center) {
+      state.centerOnNextLocation = true;
+    }
+
+    if (restart && state.watchId !== null) {
+      try { navigator.geolocation.clearWatch(state.watchId); } catch (_) {}
+      state.watchId = null;
+    }
     if (state.watchId !== null) return;
-    ui.gpsBadge.textContent = 'GPS : recherche…';
+
+    ui.gpsBadge.textContent = restart ? 'GPS : reprise…' : 'GPS : recherche…';
     state.watchId = navigator.geolocation.watchPosition(
       updateLocation,
       err => {
         ui.gpsBadge.textContent = 'GPS : erreur';
         toast(err.code === 1 ? 'Autorise la localisation pour utiliser le GPS.' : 'Position GPS indisponible.');
       },
-      { enableHighAccuracy:true, maximumAge:2000, timeout:15000 }
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 }
     );
   }
 
@@ -577,12 +558,18 @@
     ui.gpsBadge.textContent = `GPS : ±${Math.round(accuracy || 0)} m`;
     if (Number.isFinite(altitude)) ui.elevationNow.textContent = `${Math.round(altitude)} m`;
 
-    if (state.mapFollowGps || state.centerOnNextLocation) {
-      centerMapOnLocation(state.centerOnNextLocation);
+    // Pendant une activité, le point bleu est TOUJOURS recentré par le GPS lui-même.
+    // Cette règle ne dépend ni de la boussole ni des gestes sur la carte.
+    if (['recording','paused'].includes(state.activity.status)) {
+      state.mapFollowGps = true;
+      state.map.setView(ll, Math.max(state.map.getZoom(), 15), { animate:false });
+      state.centerOnNextLocation = false;
+    } else if (state.centerOnNextLocation) {
+      state.map.setView(ll, Math.max(state.map.getZoom(), 15));
       state.centerOnNextLocation = false;
     }
-    applyAutomaticHeading();
-    updateNavigationControls();
+    // Une erreur du plugin de rotation ne doit jamais interrompre updateLocation.
+    try { applyAutomaticHeading(); updateNavigationControls(); } catch (_) {}
 
     if (state.activity.status === 'recording') recordActivityPoint(state.location);
     if (state.activity.followRoute) updateRouteFollowGuide(state.location);
@@ -1647,91 +1634,47 @@
     const panel = ui.finderMapDetail;
     if (!panel || panel.dataset.sheetBound === '1') return;
     panel.dataset.sheetBound = '1';
-
-    const resetDragVisual = () => {
-      panel.classList.remove('sheet-dragging');
-      panel.style.removeProperty('--sheet-drag-y');
-    };
-
+    const reset = () => { panel.classList.remove('sheet-dragging'); panel.style.removeProperty('--sheet-drag-y'); };
     const applySwipe = (dy, dx = 0) => {
       if (!Number.isFinite(dy) || Math.abs(dy) < 38 || Math.abs(dy) < Math.abs(dx) * 1.10) return false;
       if (dy > 0) {
         if (panel.classList.contains('collapsed')) closeFinderMapDetail();
         else setFinderMapDetailCollapsed(true);
-      } else {
-        setFinderMapDetailCollapsed(false);
-      }
+      } else setFinderMapDetailCollapsed(false);
       return true;
     };
-
-    ui.finderMapDetailToggle?.addEventListener('click', e => {
-      e.stopPropagation();
-      setFinderMapDetailCollapsed(!panel.classList.contains('collapsed'));
-    });
-
+    ui.finderMapDetailToggle?.addEventListener('click', e => { e.stopPropagation(); setFinderMapDetailCollapsed(!panel.classList.contains('collapsed')); });
     let pointerId = null, startY = 0, startX = 0, lastY = 0, lastX = 0;
-    let suppressTouchUntil = 0;
     const canStart = target => {
       if (target.closest('button:not(.finder-detail-sheet-toggle),input,a,.elevation-chart')) return false;
-      const gripArea = !!target.closest('.finder-detail-sheet-toggle,.finder-detail-head');
-      if (!gripArea && !panel.classList.contains('collapsed') && panel.scrollTop > 2) return false;
-      return true;
+      const grip = !!target.closest('.finder-detail-sheet-toggle,.finder-detail-head');
+      return grip || panel.classList.contains('collapsed') || panel.scrollTop <= 2;
     };
-    const pointerStart = e => {
+    panel.addEventListener('pointerdown', e => {
       if (e.pointerType === 'mouse' && e.button !== 0) return;
       if (!canStart(e.target)) return;
-      pointerId = e.pointerId;
-      startY = lastY = e.clientY;
-      startX = lastX = e.clientX;
+      pointerId = e.pointerId; startY = lastY = e.clientY; startX = lastX = e.clientX;
       panel.classList.add('sheet-dragging');
       try { panel.setPointerCapture(pointerId); } catch (_) {}
-    };
-    const pointerMove = e => {
+    });
+    panel.addEventListener('pointermove', e => {
       if (pointerId == null || e.pointerId !== pointerId) return;
       lastY = e.clientY; lastX = e.clientX;
       const dy = lastY - startY;
       if (Math.abs(dy) > 4) {
-        const visualY = Math.max(-36, Math.min(160, dy * 0.76));
-        panel.style.setProperty('--sheet-drag-y', `${visualY}px`);
+        panel.style.setProperty('--sheet-drag-y', `${Math.max(-36, Math.min(160, dy * .76))}px`);
         if (e.cancelable) e.preventDefault();
       }
-    };
-    const pointerFinish = e => {
+    }, { passive:false });
+    const finish = e => {
       if (pointerId == null || e.pointerId !== pointerId) return;
       const dy = (Number.isFinite(e.clientY) ? e.clientY : lastY) - startY;
       const dx = (Number.isFinite(e.clientX) ? e.clientX : lastX) - startX;
       try { panel.releasePointerCapture(pointerId); } catch (_) {}
-      pointerId = null;
-      resetDragVisual();
-      suppressTouchUntil = Date.now() + 650;
-      applySwipe(dy, dx);
+      pointerId = null; reset(); applySwipe(dy, dx);
     };
-    panel.addEventListener('pointerdown', pointerStart);
-    panel.addEventListener('pointermove', pointerMove, { passive:false });
-    panel.addEventListener('pointerup', pointerFinish);
-    panel.addEventListener('pointercancel', e => {
-      if (pointerId != null && e.pointerId === pointerId) {
-        pointerId = null;
-        resetDragVisual();
-      }
-    });
-
-    let touchStartY = null, touchStartX = null;
-    panel.addEventListener('touchstart', e => {
-      if (e.touches.length !== 1 || !canStart(e.target)) return;
-      touchStartY = e.touches[0].clientY;
-      touchStartX = e.touches[0].clientX;
-    }, { passive:true });
-    panel.addEventListener('touchend', e => {
-      if (touchStartY == null) return;
-      if (Date.now() < suppressTouchUntil) { touchStartY = touchStartX = null; return; }
-      const t = e.changedTouches?.[0];
-      const dy = t ? t.clientY - touchStartY : 0;
-      const dx = t ? t.clientX - touchStartX : 0;
-      touchStartY = touchStartX = null;
-      if (pointerId == null) applySwipe(dy, dx);
-    }, { passive:true });
-    panel.addEventListener('touchcancel', () => { touchStartY = touchStartX = null; }, { passive:true });
+    panel.addEventListener('pointerup', finish);
+    panel.addEventListener('pointercancel', () => { pointerId = null; reset(); });
   }
 
   function closeFinderDetailCard() { ui.finderDetailCard?.classList.add('hidden'); }
@@ -2920,7 +2863,8 @@
         ele: hasElevation(p.ele) ? Number(p.ele) : null,
         time: p.time || null,
         timestamp: Number(p.timestamp) || null,
-        accuracy: Number.isFinite(Number(p.accuracy)) ? Number(p.accuracy) : null
+        accuracy: Number.isFinite(Number(p.accuracy)) ? Number(p.accuracy) : null,
+        breakBefore: Boolean(p.breakBefore)
       })).filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon)),
       distanceKm: Number(a.distanceKm) || 0,
       currentSpeed: Number(a.currentSpeed) || 0,
@@ -2947,6 +2891,67 @@
     lastActivityPersistAt = 0;
   }
 
+  function activityTrackLatLngs(points = state.activity.points) {
+    const segments = [];
+    let segment = [];
+    for (const p of points || []) {
+      if (!Number.isFinite(Number(p.lat)) || !Number.isFinite(Number(p.lon))) continue;
+      if (p.breakBefore && segment.length) {
+        segments.push(segment);
+        segment = [];
+      }
+      segment.push([Number(p.lat), Number(p.lon)]);
+    }
+    if (segment.length) segments.push(segment);
+    if (segments.length <= 1) return segments[0] || [];
+    return segments;
+  }
+
+  function activityDistanceFromPoints(points) {
+    let total = 0;
+    for (let i = 1; i < (points || []).length; i++) {
+      if (points[i]?.breakBefore) continue;
+      total += haversine(points[i - 1], points[i]);
+    }
+    return total;
+  }
+
+  function ensureActivityUiTimer() {
+    clearInterval(state.activity.timer);
+    state.activity.timer = null;
+    if (['recording','paused','finished'].includes(state.activity.status)) {
+      state.activity.timer = setInterval(updateActivityUI, 1000);
+      updateActivityUI();
+    }
+  }
+
+  function resumePwaActivityAfterForeground(reason = 'foreground') {
+    if (!['recording','paused'].includes(state.activity.status)) return false;
+
+    // Le chrono est calculé depuis startedAt : il récupère donc immédiatement
+    // tout le temps écoulé pendant que Chrome avait gelé la page.
+    ensureActivityUiTimer();
+    persistActivitySnapshot(true);
+
+    state.mapFollowGps = true;
+    state.centerOnNextLocation = true;
+    startLocation(false, { restart:true });
+
+    const hiddenMs = pwaHiddenAt ? Math.max(0, Date.now() - pwaHiddenAt) : 0;
+    const now = Date.now();
+    if (hiddenMs >= 1200 && now - lastPwaResumeNoticeAt > 4000) {
+      lastPwaResumeNoticeAt = now;
+      if (state.activity.status === 'paused') {
+        toast('Activité retrouvée · elle est toujours en pause.');
+      } else {
+        setAlert('safe', '↻', 'Activité reprise', 'Compteur réactualisé · suivi GPS relancé.');
+        toast('Activité reprise · GPS relancé.');
+      }
+    }
+    pwaHiddenAt = 0;
+    return true;
+  }
+
   function restoreActivitySnapshot() {
     let snap;
     try { snap = JSON.parse(localStorage.getItem(ACTIVE_ACTIVITY_KEY) || 'null'); }
@@ -2964,7 +2969,8 @@
       ele:hasElevation(p.ele) ? Number(p.ele) : null,
       time:p.time || null,
       timestamp:Number(p.timestamp) || Date.now(),
-      accuracy:Number.isFinite(Number(p.accuracy)) ? Number(p.accuracy) : null
+      accuracy:Number.isFinite(Number(p.accuracy)) ? Number(p.accuracy) : null,
+      breakBefore:Boolean(p.breakBefore)
     })).filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon)) : [];
 
     const mode = ACTIVITY_PROFILES[snap.mode] ? snap.mode : 'hike';
@@ -2980,14 +2986,14 @@
     state.activity.pausedMs = Number(snap.pausedMs) || 0;
     state.activity.finishedAt = Number(snap.finishedAt) || null;
     state.activity.points = pts;
-    state.activity.distanceKm = Number(snap.distanceKm) || (pts.length > 1 ? routeDistance(pts) : 0);
+    state.activity.distanceKm = Number(snap.distanceKm) || (pts.length > 1 ? activityDistanceFromPoints(pts) : 0);
     state.activity.currentSpeed = snap.status === 'recording' ? (Number(snap.currentSpeed) || 0) : 0;
     state.activity.name = snap.name || `${getActivityProfile(mode).label} restaurée`;
     state.activity.followRoute = followRoute;
     state.activity.followRouteCumKm = followRoute ? buildCumulativeRouteKm(followRoute.points) : null;
     state.activity.followRouteLastIndex = Number.isInteger(snap.followRouteLastIndex) ? snap.followRouteLastIndex : null;
     state.activity.offRouteAlerted = false;
-    state.activity.line = L.polyline(pts.map(p => [p.lat,p.lon]), { color:'#fb7185', weight:5, opacity:.96 }).addTo(state.map);
+    state.activity.line = L.polyline(activityTrackLatLngs(pts), { color:'#fb7185', weight:5, opacity:.96 }).addTo(state.map);
 
     if (followRoute) {
       state.route = followRoute;
@@ -3004,14 +3010,13 @@
       ui.targetGuide.classList.remove('hidden');
     }
 
-    clearInterval(state.activity.timer);
-    state.activity.timer = setInterval(updateActivityUI, 1000);
-    updateActivityUI();
+    ensureActivityUiTimer();
     syncActivityMapPanel();
 
     if (snap.status === 'recording' || snap.status === 'paused') {
+      state.mapFollowGps = true;
+      state.centerOnNextLocation = true;
       startLocation(false);
-      enableGpsMapFollow({ raiseZoom: false });
       setAlert('safe', '↻', 'Activité restaurée', `${getActivityProfile(mode).label} reprise après le rechargement de la page.`);
       toast(snap.status === 'paused' ? 'Activité restaurée en pause.' : 'Activité restaurée · GPS repris.');
       if (snap.mapFullscreen) {
@@ -3058,25 +3063,19 @@
       : `${activityProfile.label} ${new Date().toLocaleString('fr-FR', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})}`;
     state.activity.line = L.polyline([], { color:'#fb7185', weight:5, opacity:.96 }).addTo(state.map);
     persistActivitySnapshot(true);
+    state.mapFollowGps = true;
+    if (state.location) centerActiveGpsNow(true);
+    else state.centerOnNextLocation = true;
     startLocation(false);
-    // Une activité en cours suit toujours la position GPS au centre de la carte.
-    enableGpsMapFollow({ raiseZoom: true });
     if (state.location) recordActivityPoint(state.location, true);
-    clearInterval(state.activity.timer);
-    state.activity.timer = setInterval(updateActivityUI, 1000);
-    updateActivityUI();
+    ensureActivityUiTimer();
     if (routeToFollow) {
       drawRoute(false);
       setAlert('safe', '🧭', 'Suivi du GPX en cours', `${routeToFollow.name} · le tracé bleu reste affiché et ta trace réelle est enregistrée en rose.`);
       toast(`Parcours démarré : ${routeToFollow.name}`);
-      // Si le GPS n'est pas encore disponible on peut montrer le parcours entier.
-      // Dès qu'une position existe, on conserve le centrage GPS de l'activité.
-      setTimeout(() => {
-        if (!state.location && state.routeLine) state.map.fitBounds(state.routeLine.getBounds(), { padding: [34, 34] });
-        else if (state.location) centerMapOnLocation(false);
-      }, 100);
+      setTimeout(() => { if (!state.location && state.routeLine) state.map.fitBounds(state.routeLine.getBounds(), { padding: [34, 34] }); else if (state.location) centerActiveGpsNow(true); }, 100);
     } else {
-      setAlert('safe', '▶️', 'Activité en cours', 'La trace GPS est enregistrée. La carte suit automatiquement ta position au centre.');
+      setAlert('safe', '▶️', 'Activité en cours', 'La trace GPS est enregistrée et ta position reste centrée sur la carte.');
       toast('Enregistrement GPS démarré.');
     }
 
@@ -3101,28 +3100,43 @@
       ele: Number.isFinite(loc.altitude) ? loc.altitude : null,
       time: new Date(loc.timestamp || Date.now()).toISOString(),
       timestamp: loc.timestamp || Date.now(),
-      accuracy: Number.isFinite(accuracy) ? accuracy : null
+      accuracy: Number.isFinite(accuracy) ? accuracy : null,
+      breakBefore: false
     };
     const prev = state.activity.points[state.activity.points.length - 1];
     if (prev) {
       const d = haversine(prev, p);
       const dt = Math.max(0.5, (p.timestamp - prev.timestamp) / 1000);
       const computedSpeed = (d / dt) * 3600;
-      const maxPlausible = getActivityProfile().maxPlausible;
+      const profile = getActivityProfile();
+      const maxPlausible = profile.maxPlausible;
       if (computedSpeed > maxPlausible) return;
-      if (!force && d < 0.002 && dt < 8) {
-        state.activity.currentSpeed = Number.isFinite(loc.speed) ? loc.speed : computedSpeed;
+
+      // Comme dans l'APK : on garde des points rapprochés. Pour limiter la dérive
+      // à l'arrêt, on exige soit un petit déplacement, soit quelques secondes.
+      const minDistanceKm = profile.cycling ? 0.0025 : 0.0018; // ~2,5 m vélo / 1,8 m marche
+      const maxPointGapS = profile.cycling ? 3.0 : 4.0;
+      if (!force && d < minDistanceKm && dt < maxPointGapS) {
+        state.activity.currentSpeed = Number.isFinite(loc.speed) ? Math.max(0, loc.speed) : computedSpeed;
         updateActivityUI();
         return;
       }
-      state.activity.distanceKm += d;
-      state.activity.currentSpeed = Number.isFinite(loc.speed) ? Math.max(0, loc.speed) : computedSpeed;
+
+      // Si Chrome a été suspendu écran éteint/arrière-plan, on ne fabrique pas
+      // une grande ligne droite entre l'ancien point et le nouveau au réveil.
+      if (!force && dt > 20 && d > 0.03) {
+        p.breakBefore = true;
+        state.activity.currentSpeed = Number.isFinite(loc.speed) ? Math.max(0, loc.speed) : 0;
+      } else {
+        state.activity.distanceKm += d;
+        state.activity.currentSpeed = Number.isFinite(loc.speed) ? Math.max(0, loc.speed) : computedSpeed;
+      }
     } else {
       state.activity.currentSpeed = Number.isFinite(loc.speed) ? Math.max(0, loc.speed) : 0;
     }
 
     state.activity.points.push(p);
-    state.activity.line.setLatLngs(state.activity.points.map(x => [x.lat, x.lon]));
+    state.activity.line.setLatLngs(activityTrackLatLngs());
     updateActivityUI();
     persistActivitySnapshot();
   }
@@ -3333,83 +3347,43 @@
     const panel = ui.activityMapPanel;
     if (!panel || panel.dataset.sheetBound === '1') return;
     panel.dataset.sheetBound = '1';
-
-    const resetDrag = () => {
-      panel.classList.remove('sheet-dragging');
-      panel.style.removeProperty('--activity-sheet-drag-y');
-    };
+    const reset = () => { panel.classList.remove('sheet-dragging'); panel.style.removeProperty('--activity-sheet-drag-y'); };
     const applySwipe = (dy, dx = 0) => {
-      if (!Number.isFinite(dy) || Math.abs(dy) < 42 || Math.abs(dy) < Math.abs(dx) * 1.15) return false;
-      if (dy > 0) setActivityPanelCollapsed(true);
-      else setActivityPanelCollapsed(false);
+      if (!Number.isFinite(dy) || Math.abs(dy) < 38 || Math.abs(dy) < Math.abs(dx) * 1.12) return false;
+      setActivityPanelCollapsed(dy > 0);
       return true;
     };
-
     let pointerId = null, startY = 0, startX = 0, lastY = 0, lastX = 0;
-    let suppressTouchUntil = 0;
     const canStart = target => {
       if (target.closest('button:not(.activity-panel-toggle),input,a')) return false;
       const grip = !!target.closest('.activity-panel-toggle,.activity-map-head');
-      if (!grip && !panel.classList.contains('collapsed') && panel.scrollTop > 2) return false;
-      return true;
+      return grip || panel.classList.contains('collapsed') || panel.scrollTop <= 2;
     };
-    const pointerStart = e => {
+    panel.addEventListener('pointerdown', e => {
       if (e.pointerType === 'mouse' && e.button !== 0) return;
       if (!canStart(e.target)) return;
-      pointerId = e.pointerId;
-      startY = lastY = e.clientY;
-      startX = lastX = e.clientX;
+      pointerId = e.pointerId; startY = lastY = e.clientY; startX = lastX = e.clientX;
       panel.classList.add('sheet-dragging');
       try { panel.setPointerCapture(pointerId); } catch (_) {}
-    };
-    const pointerMove = e => {
+    });
+    panel.addEventListener('pointermove', e => {
       if (pointerId == null || e.pointerId !== pointerId) return;
       lastY = e.clientY; lastX = e.clientX;
       const dy = lastY - startY;
       if (Math.abs(dy) > 4) {
-        const visualY = Math.max(-70, Math.min(180, dy * .78));
-        panel.style.setProperty('--activity-sheet-drag-y', `${visualY}px`);
+        panel.style.setProperty('--activity-sheet-drag-y', `${Math.max(-70, Math.min(180, dy * .78))}px`);
         if (e.cancelable) e.preventDefault();
       }
-    };
-    const pointerFinish = e => {
+    }, { passive:false });
+    const finish = e => {
       if (pointerId == null || e.pointerId !== pointerId) return;
       const dy = (Number.isFinite(e.clientY) ? e.clientY : lastY) - startY;
       const dx = (Number.isFinite(e.clientX) ? e.clientX : lastX) - startX;
       try { panel.releasePointerCapture(pointerId); } catch (_) {}
-      pointerId = null;
-      resetDrag();
-      suppressTouchUntil = Date.now() + 500;
-      applySwipe(dy, dx);
+      pointerId = null; reset(); applySwipe(dy, dx);
     };
-    panel.addEventListener('pointerdown', pointerStart);
-    panel.addEventListener('pointermove', pointerMove, { passive:false });
-    panel.addEventListener('pointerup', pointerFinish);
-    panel.addEventListener('pointercancel', e => {
-      if (pointerId != null && e.pointerId === pointerId) {
-        pointerId = null;
-        resetDrag();
-      }
-    });
-
-    // Repli pour certains Chrome Android qui annulent le PointerEvent au début
-    // d'un scroll vertical.
-    let touchStartY = null, touchStartX = null;
-    panel.addEventListener('touchstart', e => {
-      if (e.touches.length !== 1 || !canStart(e.target)) return;
-      touchStartY = e.touches[0].clientY;
-      touchStartX = e.touches[0].clientX;
-    }, { passive:true });
-    panel.addEventListener('touchend', e => {
-      if (touchStartY == null) return;
-      if (Date.now() < suppressTouchUntil) { touchStartY = touchStartX = null; return; }
-      const t = e.changedTouches?.[0];
-      const dy = t ? t.clientY - touchStartY : 0;
-      const dx = t ? t.clientX - touchStartX : 0;
-      touchStartY = touchStartX = null;
-      applySwipe(dy, dx);
-    }, { passive:true });
-    panel.addEventListener('touchcancel', () => { touchStartY = touchStartX = null; }, { passive:true });
+    panel.addEventListener('pointerup', finish);
+    panel.addEventListener('pointercancel', () => { pointerId = null; reset(); });
   }
 
   function syncActivityMapPanel() {
@@ -3657,12 +3631,18 @@
 
   function downloadGpx(name, points, type = 'route', activityType = '') {
     const safeName = (name || 'Rando Radar').replace(/[<>:"/\\|?*]+/g, '-').trim() || 'Rando-Radar';
-    const trkpts = points.map(p => {
+    const makeTrkpt = p => {
       const ele = Number.isFinite(Number(p.ele)) ? `<ele>${Number(p.ele).toFixed(1)}</ele>` : '';
       const time = p.time ? `<time>${new Date(p.time).toISOString()}</time>` : '';
       return `      <trkpt lat="${Number(p.lat).toFixed(7)}" lon="${Number(p.lon).toFixed(7)}">${ele}${time}</trkpt>`;
-    }).join('\n');
-    const gpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Rando Radar" xmlns="http://www.topografix.com/GPX/1/1">\n  <metadata><name>${xmlEscape(name || safeName)}</name></metadata>\n  <trk><name>${xmlEscape(name || safeName)}</name><type>${xmlEscape(type === 'activity' ? (activityType || 'activity') : 'route')}</type><trkseg>\n${trkpts}\n  </trkseg></trk>\n</gpx>`;
+    };
+    const segments = [[]];
+    for (const p of points || []) {
+      if (type === 'activity' && p.breakBefore && segments[segments.length - 1].length) segments.push([]);
+      segments[segments.length - 1].push(p);
+    }
+    const trksegs = segments.filter(seg => seg.length).map(seg => `  <trkseg>\n${seg.map(makeTrkpt).join('\n')}\n  </trkseg>`).join('\n');
+    const gpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Rando Radar" xmlns="http://www.topografix.com/GPX/1/1">\n  <metadata><name>${xmlEscape(name || safeName)}</name></metadata>\n  <trk><name>${xmlEscape(name || safeName)}</name><type>${xmlEscape(type === 'activity' ? (activityType || 'activity') : 'route')}</type>\n${trksegs}\n  </trk>\n</gpx>`;
     const blob = new Blob([gpx], { type:'application/gpx+xml;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -4359,17 +4339,19 @@
     ui.radarToggle.addEventListener('click', toggleRadar);
     ui.radarSlider.addEventListener('input', e => showRadarFrame(Number(e.target.value)));
     ui.radarPlay.addEventListener('click', toggleRadarAnimation);
-    ui.locateBtn.addEventListener('click', () => { startLocation(true); ensureOrientationTracking(true).catch(() => {}); });
+    ui.locateBtn.addEventListener('click', () => startLocation(true));
     ui.mapLocateBtn.addEventListener('click', e => {
       e.stopPropagation();
+      if (['recording','paused'].includes(state.activity.status)) state.mapFollowGps = true;
       startLocation(true);
-      ensureOrientationTracking(true).then(() => applyAutomaticHeading()).catch(() => {});
+      ensureOrientationTracking(true).catch(() => {});
+      updateNavigationControls();
     });
     ui.mapCompassBtn?.addEventListener('click', async e => {
       e.stopPropagation();
-      if (state.navigation.orientationMode === 'auto') {
-        setOrientationMode('north', { notify:true });
-      } else {
+      if (!state.navigation.rotateAvailable) { updateNavigationControls(); return; }
+      if (state.navigation.orientationMode === 'auto') setOrientationMode('north', { notify:true });
+      else {
         await ensureOrientationTracking(true).catch(() => false);
         setOrientationMode('auto', { notify:true });
       }
@@ -4514,10 +4496,7 @@
     });
     ui.activityMapPanel?.querySelector('.activity-map-head')?.addEventListener('click', (event) => {
       if (event.target.closest('button')) return;
-      if (!ui.activityMapPanel.classList.contains('collapsed')) {
-        event.stopPropagation();
-        setActivityPanelCollapsed(true);
-      }
+      if (!ui.activityMapPanel.classList.contains('collapsed')) { event.stopPropagation(); setActivityPanelCollapsed(true); }
     });
     ui.finishSaveBtn?.addEventListener('click', () => finalizeActivity(true));
     ui.finishDiscardBtn?.addEventListener('click', () => finalizeActivity(false));
@@ -4558,26 +4537,67 @@
 
     // Pull-to-refresh, fermeture d'onglet ou mise en arrière-plan : sauvegarde synchrone
     // de la dernière activité afin qu'un rechargement ne l'efface jamais.
-    window.addEventListener('pagehide', () => persistActivitySnapshot(true));
+    window.addEventListener('pagehide', () => {
+      pwaHiddenAt = Date.now();
+      persistActivitySnapshot(true);
+    });
     window.addEventListener('beforeunload', () => persistActivitySnapshot(true));
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') persistActivitySnapshot(true);
+      if (document.visibilityState === 'hidden') {
+        pwaHiddenAt = Date.now();
+        persistActivitySnapshot(true);
+      } else {
+        // Une PWA Android peut geler ses timers et son watchPosition en arrière-plan.
+        // Au retour au premier plan on relance explicitement les deux.
+        setTimeout(() => resumePwaActivityAfterForeground('visibility'), 80);
+      }
+    });
+    window.addEventListener('pageshow', event => {
+      if (event.persisted && ['recording','paused'].includes(state.activity.status)) {
+        setTimeout(() => resumePwaActivityAfterForeground('pageshow'), 80);
+      }
     });
   }
 
   function registerSW() {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.20', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.22', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
   }
 
-  initMap();
-  bindEvents();
-  bindOfflineEvents();
-  const activityRestored = restoreActivitySnapshot();
-  showAppScreen('map', { scroll: false });
-  renderSavedRoutes();
-  updateActivityUI();
-  if (activityRestored) syncActivityMapPanel();
-  registerSW();
-  if (navigator.onLine) loadRadar(); else setTimeout(handleOfflineNetworkLoss, 250);
-  setTimeout(() => startLocation(true), 400);
+  function loadOptionalRotatePlugin() {
+    if (L?.Map?.prototype && typeof L.Map.prototype.setBearing === 'function') return Promise.resolve(true);
+    if (!navigator.onLine) return Promise.resolve(false);
+    return new Promise(resolve => {
+      let done = false;
+      const finish = ok => { if (done) return; done = true; resolve(!!ok); };
+      const script = document.createElement('script');
+      script.src = 'https://unpkg.com/@tomickigrzegorz/leaflet-rotate@0.2.3/dist/leaflet-rotate.umd.min.js';
+      script.crossOrigin = 'anonymous';
+      script.onload = () => finish(true);
+      script.onerror = () => finish(false);
+      document.head.appendChild(script);
+      setTimeout(() => finish(false), 1200);
+    });
+  }
+
+  async function bootstrap() {
+    // La rotation est un bonus. Après 1,2 s maximum, l'application démarre même
+    // si le CDN est inaccessible : carte, GPS et offline restent prioritaires.
+    await loadOptionalRotatePlugin().catch(() => false);
+    initMap();
+    bindEvents();
+    bindOfflineEvents();
+    const activityRestored = restoreActivitySnapshot();
+    showAppScreen('map', { scroll: false });
+    renderSavedRoutes();
+    updateActivityUI();
+    if (activityRestored) syncActivityMapPanel();
+    registerSW();
+    if (navigator.onLine) loadRadar(); else setTimeout(handleOfflineNetworkLoss, 250);
+    setTimeout(() => startLocation(true), 250);
+  }
+
+  bootstrap().catch(err => {
+    console.error('Démarrage Rando Radar', err);
+    ui.gpsBadge && (ui.gpsBadge.textContent = 'GPS : erreur démarrage');
+  });
 })();

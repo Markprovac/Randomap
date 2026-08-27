@@ -1529,181 +1529,64 @@ body.pull-refresh-allowed {
 
 
 /* =========================================================
-   V1.10.18 — carte PWA alignée sur l'ergonomie Capacitor
-   GPS suivi, orientation AUTO / Nord, contrôles rapprochés,
-   panneau activité réellement glissable.
+   V1.10.21 — ergonomie carte portée sans toucher au moteur GPS
+   La géolocalisation/offline reste celle de la base PWA 1.10.17.
    ========================================================= */
-.map-locate-btn.following{
-  background:rgba(235,249,246,.98);
-  border-color:rgba(16,185,129,.45);
-  box-shadow:0 0 0 3px rgba(16,185,129,.12),0 8px 22px rgba(20,32,51,.17);
-  color:#0f8f74;
-}
-.map-locate-btn:not(.following){color:#607082}
 .map-compass-btn{
-  top:calc(132px + env(safe-area-inset-top));
-  right:12px;
-  width:50px;
-  height:50px;
-  border-radius:50%;
-  padding:0;
-  overflow:visible;
-  display:grid;
-  place-items:center;
-  color:#17283a;
+  top:calc(132px + env(safe-area-inset-top));right:12px;
+  width:50px;height:50px;border-radius:50%;padding:0;overflow:visible;
+  display:grid;place-items:center;color:#17283a;
 }
 .map-wrap.fullscreen .map-compass-btn{position:fixed;z-index:10050;pointer-events:auto}
-.compass-rose{
-  position:relative;
-  width:42px;
-  height:42px;
-  border-radius:50%;
-  display:block;
-  transform-origin:center;
-  transition:transform .18s linear;
-}
-.compass-cardinal{
-  position:absolute;
-  font-size:8px;
-  line-height:1;
-  font-weight:900;
-  color:#6a7887;
-  user-select:none;
-  pointer-events:none;
-}
+.compass-rose{position:relative;width:42px;height:42px;border-radius:50%;display:block;transform-origin:center;transition:transform .18s linear}
+.compass-cardinal{position:absolute;font-size:8px;line-height:1;font-weight:900;color:#6a7887;user-select:none;pointer-events:none}
 .compass-n{top:2px;left:50%;transform:translateX(-50%);color:#e24c4c}
 .compass-e{right:3px;top:50%;transform:translateY(-50%)}
 .compass-s{bottom:2px;left:50%;transform:translateX(-50%)}
 .compass-o{left:3px;top:50%;transform:translateY(-50%)}
-.compass-needle{
-  position:absolute;
-  left:50%;
-  top:10px;
-  width:0;
-  height:0;
-  border-left:4px solid transparent;
-  border-right:4px solid transparent;
-  border-bottom:12px solid #e24c4c;
-  transform:translateX(-50%);
-  filter:drop-shadow(0 1px 1px rgba(0,0,0,.18));
-}
-.compass-needle::after{
-  content:'';
-  position:absolute;
-  left:-3px;
-  top:12px;
-  width:6px;
-  height:11px;
-  background:#37485b;
-  clip-path:polygon(50% 100%,0 0,100% 0);
-}
-.compass-mode{
-  position:absolute;
-  right:-3px;
-  bottom:-3px;
-  min-width:22px;
-  padding:2px 4px;
-  border-radius:8px;
-  background:#0f8f74;
-  color:#fff;
-  border:2px solid #fff;
-  font-size:6px;
-  font-weight:950;
-  letter-spacing:.3px;
-  line-height:1.15;
-  box-shadow:0 2px 7px rgba(20,32,51,.18);
-}
+.compass-needle{position:absolute;left:50%;top:10px;width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-bottom:12px solid #e24c4c;transform:translateX(-50%);filter:drop-shadow(0 1px 1px rgba(0,0,0,.18))}
+.compass-needle::after{content:'';position:absolute;left:-3px;top:12px;width:6px;height:11px;background:#37485b;clip-path:polygon(50% 100%,0 0,100% 0)}
+.compass-mode{position:absolute;right:-3px;bottom:-3px;min-width:22px;padding:2px 4px;border-radius:8px;background:#0f8f74;color:#fff;border:2px solid #fff;font-size:6px;font-weight:950;letter-spacing:.3px;line-height:1.15;box-shadow:0 2px 7px rgba(20,32,51,.18)}
 .map-compass-btn.north-locked .compass-mode{background:#37485b}
 .map-compass-btn.manual .compass-mode{background:#d18a12}
-.map-compass-btn.follow-paused .compass-mode{opacity:.68}
+.map-compass-btn.rotate-unavailable .compass-mode{background:#7b8794}
 
-/* La poignée et l'en-tête capturent le geste sans faire défiler la page. */
+/* Le moteur GPS n'est jamais lié aux gestes du bottom sheet. */
 .activity-panel-toggle,.activity-map-head{touch-action:none}
 .activity-map-panel.collapsed{touch-action:none}
-.activity-map-panel.sheet-dragging{
-  transform:translateY(var(--activity-sheet-drag-y,0));
-  transition:none !important;
-  will-change:transform;
-}
+.activity-map-panel.sheet-dragging{transform:translateY(var(--activity-sheet-drag-y,0));transition:none!important;will-change:transform}
 .activity-map-panel:not(.sheet-dragging){transform:translateY(0)}
 .activity-map-panel.sheet-dragging .activity-panel-toggle::before{background:#aebbb6}
 
-
-/* =========================================================
-   V1.10.19 — fiche parcours glissable et au-dessus des zooms
-   ========================================================= */
-/* La fiche de détail est un vrai bottom sheet. Elle passe au-dessus de la
-   colonne GPS/boussole/+/- afin que les boutons ne recouvrent plus son contenu. */
-.finder-map-detail{
-  z-index:10120 !important;
-  padding-top:28px !important;
-  transition:max-height .22s ease,transform .22s ease,opacity .18s ease;
-}
-.finder-detail-sheet-toggle{
-  position:absolute;
-  top:4px;
-  left:50%;
-  transform:translateX(-50%);
-  width:72px;
-  height:25px;
-  border:0;
-  background:transparent;
-  z-index:5;
-  padding:0;
-  cursor:grab;
-  touch-action:none;
-}
-.finder-detail-sheet-toggle span{
-  display:block;
-  width:42px;
-  height:5px;
-  margin:6px auto 0;
-  border-radius:999px;
-  background:#c7d2cd;
-  box-shadow:0 1px 2px rgba(20,32,51,.08);
-}
+/* Fiche parcours : vraie poignée + glissement vertical. */
+.finder-map-detail{padding-top:28px!important;transition:max-height .22s ease,transform .22s ease,opacity .18s ease}
+.finder-detail-sheet-toggle{position:absolute;top:4px;left:50%;transform:translateX(-50%);width:72px;height:25px;border:0;background:transparent;z-index:5;padding:0;cursor:grab;touch-action:none}
+.finder-detail-sheet-toggle span{display:block;width:42px;height:5px;margin:6px auto 0;border-radius:999px;background:#c7d2cd;box-shadow:0 1px 2px rgba(20,32,51,.08)}
 .finder-detail-sheet-toggle:active{cursor:grabbing}
-.finder-map-detail .finder-detail-head{
-  position:sticky;
-  top:-16px;
-  z-index:3;
-  background:rgba(255,255,255,.98);
-  padding-top:4px;
-  padding-bottom:5px;
-  touch-action:none;
-}
-.finder-map-detail.collapsed{
-  max-height:94px !important;
-  overflow:hidden !important;
-  padding-bottom:10px !important;
-}
-.finder-map-detail.collapsed .finder-detail-body,
-.finder-map-detail.collapsed .finder-detail-actions{
-  display:none !important;
-}
-.finder-map-detail.collapsed .finder-detail-head{
-  position:static;
-  padding-bottom:0;
-}
-.finder-map-detail.sheet-dragging{
-  transform:translateY(var(--sheet-drag-y,0));
-  transition:none !important;
-  will-change:transform;
-}
+.finder-map-detail .finder-detail-head{position:sticky;top:-16px;z-index:3;background:rgba(255,255,255,.98);padding-top:4px;padding-bottom:5px;touch-action:none}
+.finder-map-detail.collapsed{max-height:94px!important;overflow:hidden!important;padding-bottom:10px!important;top:auto!important}
+.finder-map-detail.collapsed .finder-detail-body,.finder-map-detail.collapsed .finder-detail-actions{display:none!important}
+.finder-map-detail.collapsed .finder-detail-head{position:static;padding-bottom:0}
+.finder-map-detail.sheet-dragging{transform:translateY(var(--sheet-drag-y,0));transition:none!important;will-change:transform}
 .finder-map-detail:not(.sheet-dragging){transform:translateY(0)}
 
-/* La colonne de commandes reste sur le bord droit. Quand une fiche est ouverte,
-   son z-index supérieur évite le chevauchement visible montré sur Android. */
+/* En plein écran, la fiche développée commence sous la colonne GPS/boussole/+/-.
+   Son contenu défile à l'intérieur au lieu de passer sous le bouton moins. */
+.map-wrap.fullscreen .finder-map-detail:not(.hidden):not(.collapsed){
+  top:calc(312px + env(safe-area-inset-top));
+  bottom:calc(8px + env(safe-area-inset-bottom));
+  max-height:none!important;
+  z-index:10020;
+}
 .map-wrap.fullscreen .map-zoom-controls,
 .map-wrap.fullscreen .map-locate-btn,
 .map-wrap.fullscreen .map-compass-btn{z-index:10050}
 
+/* Le panneau activité reste en bas et ne remonte pas sous la colonne des contrôles. */
+.map-wrap.fullscreen.activity-active .activity-map-panel:not(.collapsed){
+  max-height:calc(100dvh - 326px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+}
 @media(max-width:520px){
-  .finder-map-detail{
-    left:8px !important;
-    right:8px !important;
-    bottom:calc(8px + env(safe-area-inset-bottom)) !important;
-    padding-top:27px !important;
-  }
-  .finder-map-detail.collapsed{max-height:92px !important}
+  .finder-map-detail{left:8px!important;right:8px!important;padding-top:27px!important}
+  .finder-map-detail.collapsed{max-height:92px!important}
 }

@@ -1,9 +1,9 @@
-const CACHE = 'rando-radar-v1.10.20';
+const CACHE = 'rando-radar-v1.10.22';
 const APP_SHELL = [
   './',
   './index.html',
-  './styles.css?v=1.10.20',
-  './app.js?v=1.10.20',
+  './styles.css?v=1.10.22',
+  './app.js?v=1.10.22',
   './manifest.webmanifest',
   './icon-192.png',
   './icon-512.png'
@@ -11,8 +11,7 @@ const APP_SHELL = [
 
 const EXTERNAL_SHELL = [
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
-  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
-  'https://unpkg.com/@tomickigrzegorz/leaflet-rotate@0.2.3/dist/leaflet-rotate.umd.min.js'
+  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
 ];
 
 self.addEventListener('install', event => {

@@ -51,8 +51,20 @@ V1.10.14 : correction de la restauration du type d’activité. Après rechargem
 V1.10.16 : blocage du geste pull-to-refresh sur Carte, Activité, Parcours et Météo. Le rechargement par tirage vers le bas reste autorisé uniquement sur l’écran Infos où la version chargée est visible. Le bouton Actualiser du navigateur reste hors du contrôle de la PWA.
 
 
-V1.10.18 : carte PWA alignée sur l'ergonomie de la version Capacitor : boussole AUTO/Nord, suivi GPS centré, boutons GPS/boussole/+/- regroupés en haut à droite, panneau d'activité glissable vers le bas pour réduire et vers le haut pour agrandir. Leaflet reste chargé via CDN côté PWA pour éviter la dépendance au dossier vendor généré uniquement pendant le build APK.
+V1.10.21 — correction de régression carte/GPS
+- Repart de la base PWA 1.10.17 pour le moteur GPS et le mode hors ligne.
+- Le GPS démarre avant toute logique de boussole/rotation.
+- Pendant une activité, chaque point GPS recentre la carte, indépendamment de la boussole.
+- Rotation AUTO/Nord conservée mais facultative : si le plugin ne charge pas, la carte/GPS démarrent quand même.
+- Boutons GPS/boussole/+/- regroupés à droite.
+- Panneau activité et fiche parcours glissables vers le bas.
+- Fiche parcours développée placée sous la colonne de contrôles pour éviter le chevauchement du bouton −.
 
-V1.10.19 : fiche de détails d'un parcours transformée en bottom sheet comme dans la version Capacitor : poignée visible, glissement vers le bas pour réduire, vers le haut pour agrandir, second glissement vers le bas pour fermer. La fiche passe au-dessus de la colonne GPS/boussole/+/- afin que le bouton − ne recouvre plus le contenu.
 
-V1.10.20 : rétablit le centrage GPS continu pendant une activité. Le démarrage/restauration d'une activité réactive explicitement le suivi GPS ; un glissement manuel de la carte ne désactive plus ce suivi pendant l'activité ; le démarrage d'un GPX ne remplace plus le centrage par un fitBounds dès qu'une position GPS est connue.
+V1.10.22 — GPS PWA point par point + reprise au premier plan
+- GPS navigateur demandé en haute précision avec maximumAge=0 : chaque nouvelle position fournie par Chrome est utilisée immédiatement.
+- Échantillonnage de trace rapproché du comportement APK : environ 2–3 m en vélo / 2 m à pied, ou un point après quelques secondes.
+- Retour dans la PWA pendant une activité : compteur recalculé immédiatement, timer UI relancé et watchPosition redémarré.
+- Message « Activité reprise · GPS relancé » restauré lors d’un vrai retour depuis l’arrière-plan.
+- Protection contre les grandes lignes droites après suspension : un trou GPS >20 s et >30 m ouvre un nouveau segment au lieu de relier artificiellement les deux points.
+- Les coupures sont conservées comme segments séparés dans l’export GPX.

@@ -1,4 +1,4 @@
-/* Rando Radar v1.10.17 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
+/* Rando Radar v1.10.18 — carte PWA alignée Capacitor + panneau activité glissable */
 (() => {
   'use strict';
 
@@ -67,6 +67,17 @@
     accuracyCircle: null,
     watchId: null,
     centerOnNextLocation: false,
+    mapFollowGps: true,
+    navigation: {
+      orientationMode: 'auto', // auto | north | manual
+      deviceHeading: null,
+      deviceHeadingAt: 0,
+      gpsHeading: null,
+      orientationListening: false,
+      orientationPermission: 'unknown',
+      mapGestureActive: false,
+      mapGestureAt: 0
+    },
     route: null,
     routeLine: null,
     routeMarkers: [],
@@ -134,7 +145,7 @@
   const ui = {
     locateBtn: $('locateBtn'), installBtn: $('installBtn'), gpsBadge: $('gpsBadge'),
     radarToggle: $('radarToggle'), radarPanel: $('radarPanel'), radarSlider: $('radarSlider'), radarPlay: $('radarPlay'), radarTime: $('radarTime'),
-    mapWrap: $('mapWrap'), mapCloseBtn: $('mapCloseBtn'), mapLocateBtn: $('mapLocateBtn'), mapZoomControls: $('mapZoomControls'), mapZoomInBtn: $('mapZoomInBtn'), mapZoomOutBtn: $('mapZoomOutBtn'), mapExpandHint: $('mapExpandHint'),
+    mapWrap: $('mapWrap'), mapCloseBtn: $('mapCloseBtn'), mapLocateBtn: $('mapLocateBtn'), mapCompassBtn: $('mapCompassBtn'), mapZoomControls: $('mapZoomControls'), mapZoomInBtn: $('mapZoomInBtn'), mapZoomOutBtn: $('mapZoomOutBtn'), mapExpandHint: $('mapExpandHint'),
     tempNow: $('tempNow'), rainNow: $('rainNow'), gustNow: $('gustNow'), feelNow: $('feelNow'), elevationNow: $('elevationNow'), weatherIcon: $('weatherIcon'),
     alertCard: $('alertCard'), alertIcon: $('alertIcon'), alertTitle: $('alertTitle'), alertText: $('alertText'),
     gpxInput: $('gpxInput'), analyzeBtn: $('analyzeBtn'), routeCard: $('routeCard'), routeName: $('routeName'), routeDistance: $('routeDistance'), routeGain: $('routeGain'), routeLoss: $('routeLoss'), routeHigh: $('routeHigh'), routeForecast: $('routeForecast'), clearRouteBtn: $('clearRouteBtn'), exportRouteBtn: $('exportRouteBtn'), routeStartBtn: $('routeStartBtn'), routeShowBtn: $('routeShowBtn'),
@@ -193,7 +204,18 @@
   }
 
   function initMap() {
-    state.map = L.map('map', { zoomControl: false, preferCanvas: true, tap: true }).setView([44.2, 6.7], 8);
+    // leaflet-rotate est chargé séparément dans index.html. Si le CDN est
+    // momentanément indisponible, Leaflet ignore simplement ces options et la
+    // carte reste utilisable en orientation Nord classique.
+    state.map = L.map('map', {
+      zoomControl: false,
+      preferCanvas: true,
+      tap: true,
+      rotate: true,
+      bearing: 0,
+      touchRotate: true,
+      rotateControl: false
+    }).setView([44.2, 6.7], 8);
     L.control.zoom({ position: 'bottomright' }).addTo(state.map);
 
     state.baseLayers.topo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
@@ -207,6 +229,43 @@
     state.baseLayers.topo.addTo(state.map);
 
     state.map.on('click', handleMapClick);
+
+    // Seul un vrai geste utilisateur suspend le suivi de la caméra. Les
+    // rotations automatiques ne doivent pas faire perdre le centrage GPS.
+    const mapContainer = state.map.getContainer();
+    const markMapGestureStart = () => {
+      state.navigation.mapGestureActive = true;
+      state.navigation.mapGestureAt = Date.now();
+    };
+    const markMapGestureEnd = () => { state.navigation.mapGestureActive = false; };
+    if (window.PointerEvent) {
+      mapContainer.addEventListener('pointerdown', markMapGestureStart, { passive:true });
+      window.addEventListener('pointerup', markMapGestureEnd, { passive:true });
+      window.addEventListener('pointercancel', markMapGestureEnd, { passive:true });
+    } else {
+      mapContainer.addEventListener('touchstart', markMapGestureStart, { passive:true });
+      window.addEventListener('touchend', markMapGestureEnd, { passive:true });
+      window.addEventListener('touchcancel', markMapGestureEnd, { passive:true });
+      mapContainer.addEventListener('mousedown', markMapGestureStart, { passive:true });
+      window.addEventListener('mouseup', markMapGestureEnd, { passive:true });
+    }
+
+    state.map.on('dragstart', () => {
+      const userInitiated = state.navigation.mapGestureActive || (Date.now() - Number(state.navigation.mapGestureAt || 0) < 500);
+      if (!userInitiated || !state.mapFollowGps) return;
+      state.mapFollowGps = false;
+      stopAutomaticHeading();
+      updateNavigationControls();
+    });
+
+    state.map.on('rotatestart', () => {
+      if (state.navigation.orientationMode !== 'auto') return;
+      state.navigation.orientationMode = 'manual';
+      stopAutomaticHeading();
+      updateNavigationControls();
+    });
+    state.map.on('rotate', updateCompassRose);
+    updateNavigationControls();
   }
 
   function handleMapClick(e) {
@@ -233,9 +292,16 @@
     document.body.classList.add('map-fullscreen');
     ui.mapCloseBtn.classList.remove('hidden');
     ui.mapLocateBtn.classList.remove('hidden');
+    ui.mapCompassBtn?.classList.remove('hidden');
     ui.mapZoomControls.classList.remove('hidden');
     syncActivityMapPanel();
-    setTimeout(() => state.map.invalidateSize(), 50);
+    ensureOrientationTracking(false).catch(() => {});
+    setTimeout(() => {
+      state.map.invalidateSize();
+      if (state.mapFollowGps && state.location) centerMapOnLocation(false);
+      applyAutomaticHeading();
+      updateNavigationControls();
+    }, 50);
   }
 
   function exitMapFullscreen() {
@@ -244,9 +310,148 @@
     document.body.classList.remove('map-fullscreen');
     ui.mapCloseBtn.classList.add('hidden');
     ui.mapLocateBtn.classList.add('hidden');
+    ui.mapCompassBtn?.classList.add('hidden');
     ui.mapZoomControls.classList.add('hidden');
+    stopAutomaticHeading();
+    if (typeof state.map?.setBearing === 'function') state.map.setBearing(0);
+    if (state.navigation.orientationMode === 'manual') state.navigation.orientationMode = 'north';
     syncActivityMapPanel();
-    setTimeout(() => state.map.invalidateSize(), 50);
+    setTimeout(() => { state.map.invalidateSize(); updateNavigationControls(); }, 50);
+  }
+
+  function normalizeHeading(deg) {
+    const n = Number(deg);
+    return Number.isFinite(n) ? ((n % 360) + 360) % 360 : null;
+  }
+
+  function screenOrientationAngle() {
+    const angle = Number(screen?.orientation?.angle ?? window.orientation ?? 0);
+    return Number.isFinite(angle) ? angle : 0;
+  }
+
+  function headingFromOrientationEvent(event) {
+    if (!event) return null;
+    if (Number.isFinite(Number(event.webkitCompassHeading))) {
+      return normalizeHeading(Number(event.webkitCompassHeading) + screenOrientationAngle());
+    }
+    if ((event.absolute === true || event.type === 'deviceorientationabsolute') && Number.isFinite(Number(event.alpha))) {
+      return normalizeHeading(360 - Number(event.alpha) + screenOrientationAngle());
+    }
+    return null;
+  }
+
+  function preferredNavigationHeading() {
+    const gpsHeading = normalizeHeading(state.navigation.gpsHeading);
+    const speed = Number(state.location?.speed);
+    if (gpsHeading != null && Number.isFinite(speed) && speed >= 3) return gpsHeading;
+    const deviceFresh = Date.now() - Number(state.navigation.deviceHeadingAt || 0) < 2500;
+    const deviceHeading = normalizeHeading(state.navigation.deviceHeading);
+    if (deviceFresh && deviceHeading != null) return deviceHeading;
+    return gpsHeading;
+  }
+
+  function stopAutomaticHeading() {
+    if (!state.map) return;
+    if (typeof state.map.setHeading === 'function') state.map.setHeading(null);
+    else if (typeof state.map.stopHeadingUp === 'function') state.map.stopHeadingUp();
+  }
+
+  function applyAutomaticHeading() {
+    if (!state.map || !state.mapFullscreen || !state.mapFollowGps) return;
+    if (state.navigation.orientationMode !== 'auto') return;
+    const heading = preferredNavigationHeading();
+    if (heading == null || typeof state.map.setHeading !== 'function') return;
+    state.map.setHeading(heading, { ease:0.18, deadzone:1.2 });
+  }
+
+  function updateCompassRose() {
+    if (!ui.mapCompassBtn) return;
+    const rose = ui.mapCompassBtn.querySelector('.compass-rose');
+    const bearing = typeof state.map?.getBearing === 'function' ? Number(state.map.getBearing()) || 0 : 0;
+    if (rose) rose.style.transform = `rotate(${bearing}deg)`;
+  }
+
+  function updateNavigationControls() {
+    if (ui.mapLocateBtn) {
+      ui.mapLocateBtn.classList.toggle('following', !!state.mapFollowGps);
+      ui.mapLocateBtn.title = state.mapFollowGps ? 'Position suivie · toucher pour recentrer' : 'Reprendre le suivi de ma position';
+    }
+    if (!ui.mapCompassBtn) return;
+    const mode = state.navigation.orientationMode;
+    ui.mapCompassBtn.classList.toggle('auto', mode === 'auto');
+    ui.mapCompassBtn.classList.toggle('north-locked', mode === 'north');
+    ui.mapCompassBtn.classList.toggle('manual', mode === 'manual');
+    ui.mapCompassBtn.classList.toggle('follow-paused', !state.mapFollowGps);
+    const label = ui.mapCompassBtn.querySelector('.compass-mode');
+    if (label) label.textContent = mode === 'auto' ? 'AUTO' : (mode === 'north' ? 'N' : 'MAN');
+    const title = mode === 'auto'
+      ? 'Orientation automatique active · toucher pour verrouiller le Nord'
+      : (mode === 'north' ? 'Nord verrouillé · toucher pour orientation automatique' : 'Orientation manuelle · toucher pour revenir en automatique');
+    ui.mapCompassBtn.title = title;
+    ui.mapCompassBtn.setAttribute('aria-label', title);
+    ui.mapCompassBtn.setAttribute('aria-pressed', mode === 'auto' ? 'true' : 'false');
+    updateCompassRose();
+  }
+
+  function setOrientationMode(mode, { notify = false } = {}) {
+    const next = ['auto','north','manual'].includes(mode) ? mode : 'north';
+    state.navigation.orientationMode = next;
+    stopAutomaticHeading();
+    if (next === 'north') {
+      try { state.map?.touchRotate?.disable?.(); } catch (_) {}
+      if (typeof state.map?.setBearing === 'function') state.map.setBearing(0);
+      if (notify) toast('🧭 Nord verrouillé · la carte ne tourne plus toute seule.');
+    } else {
+      try { state.map?.touchRotate?.enable?.(); } catch (_) {}
+      if (next === 'auto') {
+        applyAutomaticHeading();
+        if (notify) toast('🧭 Orientation automatique activée.');
+      }
+    }
+    updateNavigationControls();
+  }
+
+  function centerMapOnLocation(raiseZoom = false) {
+    if (!state.location || !state.map) return false;
+    const ll = [state.location.lat, state.location.lon];
+    const currentZoom = state.map.getZoom();
+    const zoom = raiseZoom ? Math.max(currentZoom, 15) : currentZoom;
+    state.map.setView(ll, zoom, { animate:false });
+    return true;
+  }
+
+  function enableGpsMapFollow({ raiseZoom = true } = {}) {
+    state.mapFollowGps = true;
+    state.centerOnNextLocation = !centerMapOnLocation(raiseZoom);
+    updateNavigationControls();
+    applyAutomaticHeading();
+  }
+
+  async function ensureOrientationTracking(fromUserGesture = false) {
+    if (state.navigation.orientationListening) return true;
+    if (!('DeviceOrientationEvent' in window)) return false;
+    const requestPermission = window.DeviceOrientationEvent?.requestPermission;
+    if (typeof requestPermission === 'function' && state.navigation.orientationPermission !== 'granted') {
+      if (!fromUserGesture) return false;
+      try {
+        const result = await requestPermission.call(window.DeviceOrientationEvent);
+        state.navigation.orientationPermission = result;
+        if (result !== 'granted') return false;
+      } catch (_) { return false; }
+    } else {
+      state.navigation.orientationPermission = 'granted';
+    }
+    const handle = event => {
+      const heading = headingFromOrientationEvent(event);
+      if (heading == null) return;
+      state.navigation.deviceHeading = heading;
+      state.navigation.deviceHeadingAt = Date.now();
+      applyAutomaticHeading();
+    };
+    window.addEventListener('deviceorientationabsolute', handle, true);
+    window.addEventListener('deviceorientation', handle, true);
+    state.navigation.orientationListening = true;
+    return true;
   }
 
   function switchBase(name) {
@@ -322,18 +527,14 @@
   }
 
   function startLocation(center = true) {
+    if (center) {
+      enableGpsMapFollow({ raiseZoom:true });
+      ensureOrientationTracking(false).catch(() => {});
+    }
     if (!('geolocation' in navigator)) {
       toast('La géolocalisation n’est pas disponible sur cet appareil.');
       return;
     }
-
-    if (center && state.location) {
-      state.map.setView([state.location.lat, state.location.lon], Math.max(state.map.getZoom(), 15));
-      state.centerOnNextLocation = false;
-    } else if (center) {
-      state.centerOnNextLocation = true;
-    }
-
     if (state.watchId !== null) return;
     ui.gpsBadge.textContent = 'GPS : recherche…';
     state.watchId = navigator.geolocation.watchPosition(
@@ -342,7 +543,7 @@
         ui.gpsBadge.textContent = 'GPS : erreur';
         toast(err.code === 1 ? 'Autorise la localisation pour utiliser le GPS.' : 'Position GPS indisponible.');
       },
-      { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 }
+      { enableHighAccuracy:true, maximumAge:2000, timeout:15000 }
     );
   }
 
@@ -354,9 +555,10 @@
       accuracy: Number.isFinite(accuracy) ? accuracy : null,
       altitude: Number.isFinite(altitude) ? altitude : null,
       speed: Number.isFinite(speed) ? speed * 3.6 : null,
-      heading: Number.isFinite(heading) ? heading : null,
+      heading: Number.isFinite(heading) ? normalizeHeading(heading) : null,
       timestamp: pos.timestamp || Date.now()
     };
+    if (state.location.heading != null) state.navigation.gpsHeading = state.location.heading;
     const ll = [latitude, longitude];
 
     if (!state.locationMarker) {
@@ -371,10 +573,12 @@
     ui.gpsBadge.textContent = `GPS : ±${Math.round(accuracy || 0)} m`;
     if (Number.isFinite(altitude)) ui.elevationNow.textContent = `${Math.round(altitude)} m`;
 
-    if (state.centerOnNextLocation) {
-      state.map.setView(ll, Math.max(state.map.getZoom(), 15));
+    if (state.mapFollowGps || state.centerOnNextLocation) {
+      centerMapOnLocation(state.centerOnNextLocation);
       state.centerOnNextLocation = false;
     }
+    applyAutomaticHeading();
+    updateNavigationControls();
 
     if (state.activity.status === 'recording') recordActivityPoint(state.location);
     if (state.activity.followRoute) updateRouteFollowGuide(state.location);
@@ -3011,6 +3215,89 @@
     setActivityPanelCollapsed(!ui.activityMapPanel.classList.contains('collapsed'));
   }
 
+  function bindActivityPanelSheet() {
+    const panel = ui.activityMapPanel;
+    if (!panel || panel.dataset.sheetBound === '1') return;
+    panel.dataset.sheetBound = '1';
+
+    const resetDrag = () => {
+      panel.classList.remove('sheet-dragging');
+      panel.style.removeProperty('--activity-sheet-drag-y');
+    };
+    const applySwipe = (dy, dx = 0) => {
+      if (!Number.isFinite(dy) || Math.abs(dy) < 42 || Math.abs(dy) < Math.abs(dx) * 1.15) return false;
+      if (dy > 0) setActivityPanelCollapsed(true);
+      else setActivityPanelCollapsed(false);
+      return true;
+    };
+
+    let pointerId = null, startY = 0, startX = 0, lastY = 0, lastX = 0;
+    let suppressTouchUntil = 0;
+    const canStart = target => {
+      if (target.closest('button:not(.activity-panel-toggle),input,a')) return false;
+      const grip = !!target.closest('.activity-panel-toggle,.activity-map-head');
+      if (!grip && !panel.classList.contains('collapsed') && panel.scrollTop > 2) return false;
+      return true;
+    };
+    const pointerStart = e => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      if (!canStart(e.target)) return;
+      pointerId = e.pointerId;
+      startY = lastY = e.clientY;
+      startX = lastX = e.clientX;
+      panel.classList.add('sheet-dragging');
+      try { panel.setPointerCapture(pointerId); } catch (_) {}
+    };
+    const pointerMove = e => {
+      if (pointerId == null || e.pointerId !== pointerId) return;
+      lastY = e.clientY; lastX = e.clientX;
+      const dy = lastY - startY;
+      if (Math.abs(dy) > 4) {
+        const visualY = Math.max(-70, Math.min(180, dy * .78));
+        panel.style.setProperty('--activity-sheet-drag-y', `${visualY}px`);
+        if (e.cancelable) e.preventDefault();
+      }
+    };
+    const pointerFinish = e => {
+      if (pointerId == null || e.pointerId !== pointerId) return;
+      const dy = (Number.isFinite(e.clientY) ? e.clientY : lastY) - startY;
+      const dx = (Number.isFinite(e.clientX) ? e.clientX : lastX) - startX;
+      try { panel.releasePointerCapture(pointerId); } catch (_) {}
+      pointerId = null;
+      resetDrag();
+      suppressTouchUntil = Date.now() + 500;
+      applySwipe(dy, dx);
+    };
+    panel.addEventListener('pointerdown', pointerStart);
+    panel.addEventListener('pointermove', pointerMove, { passive:false });
+    panel.addEventListener('pointerup', pointerFinish);
+    panel.addEventListener('pointercancel', e => {
+      if (pointerId != null && e.pointerId === pointerId) {
+        pointerId = null;
+        resetDrag();
+      }
+    });
+
+    // Repli pour certains Chrome Android qui annulent le PointerEvent au début
+    // d'un scroll vertical.
+    let touchStartY = null, touchStartX = null;
+    panel.addEventListener('touchstart', e => {
+      if (e.touches.length !== 1 || !canStart(e.target)) return;
+      touchStartY = e.touches[0].clientY;
+      touchStartX = e.touches[0].clientX;
+    }, { passive:true });
+    panel.addEventListener('touchend', e => {
+      if (touchStartY == null) return;
+      if (Date.now() < suppressTouchUntil) { touchStartY = touchStartX = null; return; }
+      const t = e.changedTouches?.[0];
+      const dy = t ? t.clientY - touchStartY : 0;
+      const dx = t ? t.clientX - touchStartX : 0;
+      touchStartY = touchStartX = null;
+      applySwipe(dy, dx);
+    }, { passive:true });
+    panel.addEventListener('touchcancel', () => { touchStartY = touchStartX = null; }, { passive:true });
+  }
+
   function syncActivityMapPanel() {
     const active = ['recording','paused'].includes(state.activity.status);
     const shouldShow = active && state.mapFullscreen;
@@ -3958,8 +4245,21 @@
     ui.radarToggle.addEventListener('click', toggleRadar);
     ui.radarSlider.addEventListener('input', e => showRadarFrame(Number(e.target.value)));
     ui.radarPlay.addEventListener('click', toggleRadarAnimation);
-    ui.locateBtn.addEventListener('click', () => startLocation(true));
-    ui.mapLocateBtn.addEventListener('click', e => { e.stopPropagation(); startLocation(true); });
+    ui.locateBtn.addEventListener('click', () => { startLocation(true); ensureOrientationTracking(true).catch(() => {}); });
+    ui.mapLocateBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      startLocation(true);
+      ensureOrientationTracking(true).then(() => applyAutomaticHeading()).catch(() => {});
+    });
+    ui.mapCompassBtn?.addEventListener('click', async e => {
+      e.stopPropagation();
+      if (state.navigation.orientationMode === 'auto') {
+        setOrientationMode('north', { notify:true });
+      } else {
+        await ensureOrientationTracking(true).catch(() => false);
+        setOrientationMode('auto', { notify:true });
+      }
+    });
     ui.mapCloseBtn.addEventListener('click', e => {
       e.stopPropagation();
       if (state.hikeFinder.active) stopHikeFinder(true);
@@ -4085,6 +4385,7 @@
     }));
     ui.activityPauseBtn.addEventListener('click', toggleActivityPause);
     ui.activityStopBtn.addEventListener('click', finishActivity);
+    bindActivityPanelSheet();
     ui.activityPanelToggle?.addEventListener('click', (event) => {
       event.stopPropagation();
       toggleActivityPanel();
@@ -4098,7 +4399,10 @@
     });
     ui.activityMapPanel?.querySelector('.activity-map-head')?.addEventListener('click', (event) => {
       if (event.target.closest('button')) return;
-      if (!ui.activityMapPanel.classList.contains('collapsed')) setActivityPanelCollapsed(true);
+      if (!ui.activityMapPanel.classList.contains('collapsed')) {
+        event.stopPropagation();
+        setActivityPanelCollapsed(true);
+      }
     });
     ui.finishSaveBtn?.addEventListener('click', () => finalizeActivity(true));
     ui.finishDiscardBtn?.addEventListener('click', () => finalizeActivity(false));
@@ -4147,7 +4451,7 @@
   }
 
   function registerSW() {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.17', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.18', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
   }
 
   initMap();

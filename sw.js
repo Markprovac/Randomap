@@ -1,9 +1,9 @@
-const CACHE = 'rando-radar-v1.10.17';
+const CACHE = 'rando-radar-v1.10.18';
 const APP_SHELL = [
   './',
   './index.html',
-  './styles.css?v=1.10.17',
-  './app.js?v=1.10.17',
+  './styles.css?v=1.10.18',
+  './app.js?v=1.10.18',
   './manifest.webmanifest',
   './icon-192.png',
   './icon-512.png'
@@ -11,7 +11,8 @@ const APP_SHELL = [
 
 const EXTERNAL_SHELL = [
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
-  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
+  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
+  'https://unpkg.com/@tomickigrzegorz/leaflet-rotate@0.2.3/dist/leaflet-rotate.umd.min.js'
 ];
 
 self.addEventListener('install', event => {
@@ -73,7 +74,7 @@ self.addEventListener('fetch', event => {
   const url = new URL(req.url);
 
   // Leaflet : cache d'abord pour permettre le démarrage complet hors ligne.
-  if (url.origin === 'https://unpkg.com' && /leaflet@1\.9\.4\/dist\/leaflet\.(?:js|css)$/.test(url.pathname)) {
+  if (url.origin === 'https://unpkg.com' && (/leaflet@1\.9\.4\/dist\/leaflet\.(?:js|css)$/.test(url.pathname) || /leaflet-rotate@0\.2\.3\/dist\/leaflet-rotate\.umd\.min\.js$/.test(url.pathname))) {
     event.respondWith(cacheFirst(req));
     return;
   }

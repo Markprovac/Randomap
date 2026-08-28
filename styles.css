@@ -1619,3 +1619,9 @@ body.pull-refresh-allowed {
   box-shadow:0 2px 8px rgba(20,32,51,.34);
   box-sizing:border-box;
 }
+
+/* v1.10.30 — état GPS arrière-plan visible dans le panneau activité */
+.activity-bg-status{margin-top:3px;font-size:10px;font-weight:800;line-height:1.2;color:#64748b}
+.activity-bg-status[data-kind="ok"]{color:#0f8f72}
+.activity-bg-status[data-kind="warn"]{color:#b45309}
+.activity-map-panel.collapsed .activity-bg-status{font-size:9px;margin-top:2px}

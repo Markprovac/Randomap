@@ -1,4 +1,4 @@
-/* Rando Radar v1.10.28 — GPS PWA arrière-plan : points espacés reliés comme v1.10.16/17 */
+/* Rando Radar v1.10.29 — capture GPS arrière-plan allégée + diagnostic des points reçus */
 (() => {
   'use strict';
 
@@ -11,6 +11,11 @@
   let lastPwaResumeNoticeAt = 0;
   let lastGpsCallbackAt = 0;
   let gpsForegroundFallbackTimer = null;
+  let backgroundGpsPulseTimer = null;
+  let backgroundGpsReceived = 0;
+  let backgroundGpsAccepted = 0;
+  let pwaPointCountAtHide = 0;
+  let pendingBackgroundGapBreak = false;
   let lastInternetProbeAt = 0;
   let lastInternetProbeOk = null;
   let internetProbePromise = null;
@@ -590,7 +595,9 @@
         ui.gpsBadge.textContent = 'GPS : erreur';
         toast(err.code === 1 ? 'Autorise la localisation pour utiliser le GPS.' : 'Position GPS indisponible.');
       },
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 }
+      // Paramètres éprouvés des v1.10.16/17 : un très petit cache (2 s)
+      // donne à Chrome davantage de latitude pour continuer à livrer des fixes en arrière-plan.
+      { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 }
     );
   }
 
@@ -611,6 +618,19 @@
     lastGpsCallbackAt = Date.now();
     if (state.location.heading != null) state.navigation.gpsHeading = state.location.heading;
     const ll = [latitude, longitude];
+
+    // Mode arrière-plan PWA : si Chrome nous livre un fix pendant que la page est
+    // masquée, on le sauvegarde IMMÉDIATEMENT avant toute opération Leaflet, météo,
+    // rotation ou interface. C'est volontairement minimal pour laisser le maximum
+    // de chances au navigateur de continuer à distribuer les positions.
+    if (document.visibilityState === 'hidden' && state.activity.status === 'recording') {
+      backgroundGpsReceived += 1;
+      const before = state.activity.points.length;
+      try { recordActivityPoint(state.location); } catch (err) { console.warn('Point GPS arrière-plan ignoré', err); }
+      if (state.activity.points.length > before) backgroundGpsAccepted += 1;
+      persistActivitySnapshot(true);
+      return;
+    }
 
     // PRIORITÉ GPS : dès qu'un fix arrive, le statut et la caméra sont mis à jour
     // AVANT les couches graphiques secondaires. Une erreur Leaflet sur le cercle de
@@ -3046,8 +3066,36 @@
     }
   }
 
+  function stopBackgroundGpsPulse() {
+    if (backgroundGpsPulseTimer) clearInterval(backgroundGpsPulseTimer);
+    backgroundGpsPulseTimer = null;
+  }
+
+  function requestBackgroundGpsPulse() {
+    if (document.visibilityState !== 'hidden') return;
+    if (state.activity.status !== 'recording') return;
+    if (!('geolocation' in navigator)) return;
+    try {
+      navigator.geolocation.getCurrentPosition(
+        updateLocation,
+        () => {},
+        { enableHighAccuracy:true, maximumAge:2000, timeout:12000 }
+      );
+    } catch (_) {}
+  }
+
+  function startBackgroundGpsPulse() {
+    stopBackgroundGpsPulse();
+    if (state.activity.status !== 'recording') return;
+    // Secours best-effort en plus du watchPosition. Android peut ralentir ce timer,
+    // mais lorsqu'il continue à tourner il demande explicitement un fix récent.
+    requestBackgroundGpsPulse();
+    backgroundGpsPulseTimer = setInterval(requestBackgroundGpsPulse, 5000);
+  }
+
   function resumePwaActivityAfterForeground(reason = 'foreground') {
     if (!['recording','paused'].includes(state.activity.status)) return false;
+    stopBackgroundGpsPulse();
 
     // Le chrono est calculé depuis startedAt : il récupère immédiatement
     // le temps écoulé, même si Chrome a suspendu uniquement les timers d'affichage.
@@ -3082,19 +3130,34 @@
     }, 8000);
 
     const hiddenMs = pwaHiddenAt ? Math.max(0, Date.now() - pwaHiddenAt) : 0;
+    const backgroundAdded = Math.max(backgroundGpsAccepted, Math.max(0, state.activity.points.length - pwaPointCountAtHide));
+    // Si aucun fix n'a réellement été reçu pendant une longue mise en arrière-plan,
+    // on ne fabrique pas une ligne droite entre deux endroits éloignés. Le prochain
+    // point ouvrira un nouveau segment. S'il y a eu des fixes, ils reconstruisent
+    // naturellement la trace point par point.
+    if (state.activity.status === 'recording' && hiddenMs >= 15000 && backgroundAdded === 0) {
+      pendingBackgroundGapBreak = true;
+    }
+
     const now = Date.now();
     if (hiddenMs >= 1200 && now - lastPwaResumeNoticeAt > 4000) {
       lastPwaResumeNoticeAt = now;
       if (state.activity.status === 'paused') {
         toast('Activité retrouvée · elle est toujours en pause.');
+      } else if (backgroundAdded > 0) {
+        setAlert('safe', '↻', 'Activité reprise', `${backgroundAdded} point${backgroundAdded > 1 ? 's' : ''} GPS enregistré${backgroundAdded > 1 ? 's' : ''} en arrière-plan.`);
+        toast(`Activité reprise · ${backgroundAdded} point${backgroundAdded > 1 ? 's' : ''} GPS récupéré${backgroundAdded > 1 ? 's' : ''}.`);
       } else {
-        setAlert('safe', '↻', 'Activité reprise', watcherWasAlive
-          ? 'Compteur réactualisé · suivi GPS maintenu en arrière-plan.'
-          : 'Compteur réactualisé · suivi GPS relancé.');
-        toast(watcherWasAlive ? 'Activité reprise · suivi GPS maintenu.' : 'Activité reprise · GPS relancé.');
+        setAlert('warn', '↻', 'Activité reprise', watcherWasAlive
+          ? 'Aucun point GPS reçu pendant cet arrière-plan. Le suivi est toujours ouvert et reprend maintenant.'
+          : 'Aucun point GPS reçu pendant cet arrière-plan. Le GPS vient d’être relancé.');
+        toast('Activité reprise · aucun point GPS reçu en arrière-plan.');
       }
     }
     pwaHiddenAt = 0;
+    backgroundGpsReceived = 0;
+    backgroundGpsAccepted = 0;
+    pwaPointCountAtHide = state.activity.points.length;
     return true;
   }
 
@@ -3268,18 +3331,23 @@
       if (!force && d > 0.05 && computedSpeed > profile.maxPlausible) return;
 
       // Point par point : on ne supprime que les doublons quasi identiques.
-      if (!force && d < 0.0008 && dt < 2.5) {
+      if (!force && (d < 0.0005 || (d < 0.0008 && dt < 2.5))) {
         state.activity.currentSpeed = Number.isFinite(loc.speed) ? Math.max(0, loc.speed) : computedSpeed;
         updateActivityUI();
         return;
       }
 
-      // Comportement restauré des v1.10.16/17 : Chrome peut continuer à livrer
-      // des fixes GPS plus espacés lorsque la PWA est en arrière-plan. On conserve
-      // et relie ces points au lieu de créer automatiquement une coupure après 20 s.
-      // Le filtre de vitesse plausible ci-dessus reste la protection contre un vrai saut GPS.
-      state.activity.distanceKm += d;
-      state.activity.currentSpeed = Number.isFinite(loc.speed) ? Math.max(0, loc.speed) : computedSpeed;
+      // Si Chrome n'a livré AUCUN point pendant une longue période masquée, ne
+      // relie pas artificiellement l'ancien point au nouveau. En revanche, dès que
+      // des points ont été reçus en arrière-plan, ils restent reliés comme en v16/17.
+      if (pendingBackgroundGapBreak && !force) {
+        p.breakBefore = true;
+        pendingBackgroundGapBreak = false;
+        state.activity.currentSpeed = Number.isFinite(loc.speed) ? Math.max(0, loc.speed) : 0;
+      } else {
+        state.activity.distanceKm += d;
+        state.activity.currentSpeed = Number.isFinite(loc.speed) ? Math.max(0, loc.speed) : computedSpeed;
+      }
     } else {
       state.activity.currentSpeed = Number.isFinite(loc.speed) ? Math.max(0, loc.speed) : 0;
     }
@@ -4740,7 +4808,12 @@
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') {
         pwaHiddenAt = Date.now();
+        pwaPointCountAtHide = state.activity.points.length;
+        backgroundGpsReceived = 0;
+        backgroundGpsAccepted = 0;
+        pendingBackgroundGapBreak = false;
         persistActivitySnapshot(true);
+        startBackgroundGpsPulse();
       } else {
         // Une PWA Android peut geler ses timers et son watchPosition en arrière-plan.
         // Au retour au premier plan on relance explicitement les deux.
@@ -4758,7 +4831,7 @@
   }
 
   function registerSW() {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.28', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.29', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
   }
 
   function loadOptionalRotatePlugin() {

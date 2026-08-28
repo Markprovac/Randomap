@@ -103,3 +103,5 @@ V1.10.26 — robustesse GPS PWA
 V1.10.27 : restaure le comportement d'arrière-plan des v1.10.16/17 : le watchPosition existant n'est plus coupé au retour dans la PWA. Les fixes en attente peuvent être livrés ; redémarrage GPS de secours seulement après 8 s sans nouveau fix.
 
 V1.10.28 : restaure la continuité GPS des v1.10.16/17 en arrière-plan. Les fixes espacés de plus de 20 s sont désormais conservés et reliés au tracé au lieu d'être automatiquement marqués comme une coupure. Le filtre de vitesse plausible reste actif contre les vrais sauts GPS.
+
+V1.10.29 : capture GPS arrière-plan allégée. Les fixes reçus quand la PWA est masquée sont enregistrés et persistés avant tout rendu Leaflet. Retour aux paramètres watchPosition des v1.10.16/17 (maximumAge 2 s, timeout 15 s), ajout d'un pulse getCurrentPosition best-effort toutes les 5 s en arrière-plan et diagnostic du nombre de points réellement récupérés. Si Chrome ne livre aucun point, aucune fausse ligne droite n'est créée au retour.

@@ -1,12 +1,25 @@
-/* Rando Radar v1.10.16 — carte, GPX, radar, planificateur, suivi d'activité et navigation point */
+/* Rando Radar v1.10.32 — comportement GPS v16/17 + compteur de points GPS visible */
 (() => {
   'use strict';
 
   const ROUTER_MIN_INTERVAL = 1100;
   const SAVED_ROUTES_KEY = 'randoRadar.savedRoutes.v1';
   const ACTIVE_ACTIVITY_KEY = 'randoRadar.activeActivity.v1';
+  const PWA_BG_SESSION_KEY = 'randoRadar.pwaBackground.v1';
   let lastActivityPersistAt = 0;
   let activityPersistWarned = false;
+  let pwaHiddenAt = 0;
+  let lastPwaResumeNoticeAt = 0;
+  let lastGpsCallbackAt = 0;
+  let gpsForegroundFallbackTimer = null;
+  let backgroundGpsPulseTimer = null;
+  let backgroundGpsReceived = 0;
+  let backgroundGpsAccepted = 0;
+  let pwaPointCountAtHide = 0;
+  let pendingBackgroundGapBreak = false;
+  let lastInternetProbeAt = 0;
+  let lastInternetProbeOk = null;
+  let internetProbePromise = null;
   const VALHALLA_ROUTE_URL = 'https://valhalla1.openstreetmap.de/route';
   const OVERPASS_ENDPOINTS = [
     'https://overpass.private.coffee/api/interpreter',
@@ -67,6 +80,20 @@
     accuracyCircle: null,
     watchId: null,
     centerOnNextLocation: false,
+    // Même logique que l'APK Capacitor : bleu = caméra verrouillée sur le GPS.
+    // Un vrai glissement utilisateur déverrouille la caméra sans arrêter le GPS.
+    mapFollowGps: true,
+    navigation: {
+      orientationMode: 'auto', // auto | north | manual
+      deviceHeading: null,
+      deviceHeadingAt: 0,
+      gpsHeading: null,
+      orientationListening: false,
+      orientationPermission: 'unknown',
+      rotateAvailable: false,
+      mapGestureActive: false,
+      mapGestureAt: 0
+    },
     route: null,
     routeLine: null,
     routeMarkers: [],
@@ -134,19 +161,19 @@
   const ui = {
     locateBtn: $('locateBtn'), installBtn: $('installBtn'), gpsBadge: $('gpsBadge'),
     radarToggle: $('radarToggle'), radarPanel: $('radarPanel'), radarSlider: $('radarSlider'), radarPlay: $('radarPlay'), radarTime: $('radarTime'),
-    mapWrap: $('mapWrap'), mapCloseBtn: $('mapCloseBtn'), mapLocateBtn: $('mapLocateBtn'), mapZoomControls: $('mapZoomControls'), mapZoomInBtn: $('mapZoomInBtn'), mapZoomOutBtn: $('mapZoomOutBtn'), mapExpandHint: $('mapExpandHint'),
+    mapWrap: $('mapWrap'), mapCloseBtn: $('mapCloseBtn'), mapLocateBtn: $('mapLocateBtn'), mapCompassBtn: $('mapCompassBtn'), mapZoomControls: $('mapZoomControls'), mapZoomInBtn: $('mapZoomInBtn'), mapZoomOutBtn: $('mapZoomOutBtn'), mapExpandHint: $('mapExpandHint'),
     tempNow: $('tempNow'), rainNow: $('rainNow'), gustNow: $('gustNow'), feelNow: $('feelNow'), elevationNow: $('elevationNow'), weatherIcon: $('weatherIcon'),
     alertCard: $('alertCard'), alertIcon: $('alertIcon'), alertTitle: $('alertTitle'), alertText: $('alertText'),
     gpxInput: $('gpxInput'), analyzeBtn: $('analyzeBtn'), routeCard: $('routeCard'), routeName: $('routeName'), routeDistance: $('routeDistance'), routeGain: $('routeGain'), routeLoss: $('routeLoss'), routeHigh: $('routeHigh'), routeForecast: $('routeForecast'), clearRouteBtn: $('clearRouteBtn'), exportRouteBtn: $('exportRouteBtn'), routeStartBtn: $('routeStartBtn'), routeShowBtn: $('routeShowBtn'),
     hourlyForecast: $('hourlyForecast'), refreshWeatherBtn: $('refreshWeatherBtn'), refreshWeatherIcon: $('refreshWeatherIcon'), refreshWeatherLabel: $('refreshWeatherLabel'), weatherUpdatedAt: $('weatherUpdatedAt'), toast: $('toast'),
-    createRouteBtn: $('createRouteBtn'), plannerPanel: $('plannerPanel'), plannerStatus: $('plannerStatus'), plannerGpsBtn: $('plannerGpsBtn'), plannerUndoBtn: $('plannerUndoBtn'), plannerClearBtn: $('plannerClearBtn'), plannerSaveBtn: $('plannerSaveBtn'),
+    createRouteBtn: $('createRouteBtn'), plannerPanel: $('plannerPanel'), plannerStatus: $('plannerStatus'), plannerGpsBtn: $('plannerGpsBtn'), plannerUndoBtn: $('plannerUndoBtn'), plannerClearBtn: $('plannerClearBtn'), plannerSaveBtn: $('plannerSaveBtn'), plannerCloseBtn: $('plannerCloseBtn'),
     hikeFinderPanel: $('hikeFinderPanel'), hikeFinderStatus: $('hikeFinderStatus'), hikeFinderCloseBtn: $('hikeFinderCloseBtn'), hikeFinderGpsBtn: $('hikeFinderGpsBtn'), hikeFinderListBtn: $('hikeFinderListBtn'), hikeFinderMapResults: $('hikeFinderMapResults'), hikeFinderResultsCard: $('hikeFinderResultsCard'), hikeFinderResultsSummary: $('hikeFinderResultsSummary'), hikeFinderResultsList: $('hikeFinderResultsList'), hikeFinderNewSearchBtn: $('hikeFinderNewSearchBtn'), routesFindHikesBtn: $('routesFindHikesBtn'),
-    finderMapDetail: $('finderMapDetail'), finderMapDetailType: $('finderMapDetailType'), finderMapDetailName: $('finderMapDetailName'), finderMapDetailBody: $('finderMapDetailBody'), finderMapDetailClose: $('finderMapDetailClose'),
+    finderMapDetail: $('finderMapDetail'), finderMapDetailToggle: $('finderMapDetailToggle'), finderMapDetailType: $('finderMapDetailType'), finderMapDetailName: $('finderMapDetailName'), finderMapDetailBody: $('finderMapDetailBody'), finderMapDetailClose: $('finderMapDetailClose'),
     finderDetailCard: $('finderDetailCard'), finderDetailType: $('finderDetailType'), finderDetailName: $('finderDetailName'), finderDetailBody: $('finderDetailBody'), finderDetailClose: $('finderDetailClose'),
     routeDuration: $('routeDuration'), routeDifficulty: $('routeDifficulty'), routeLow: $('routeLow'), routeSurface: $('routeSurface'), routeElevationSection: $('routeElevationSection'), routeElevationChart: $('routeElevationChart'), routeElevationHint: $('routeElevationHint'),
     savedRoutesCard: $('savedRoutesCard'), savedRoutesList: $('savedRoutesList'),
     activityOpenBtn: $('activityOpenBtn'), activityCard: $('activityCard'), activityTitle: $('activityTitle'), activityCloseCardBtn: $('activityCloseCardBtn'), activityStartBtn: $('activityStartBtn'), activityExportBtn: $('activityExportBtn'), activityStats: $('activityStats'), activityDistance: $('activityDistance'), activityTime: $('activityTime'), activitySpeed: $('activitySpeed'), activityAvgSpeed: $('activityAvgSpeed'), activityHelp: $('activityHelp'),
-    activityMapPanel: $('activityMapPanel'), activityPanelToggle: $('activityPanelToggle'), activityMapTitle: $('activityMapTitle'), activityMapStatus: $('activityMapStatus'), activityMapDistance: $('activityMapDistance'), activityMapTime: $('activityMapTime'), activityMapSpeed: $('activityMapSpeed'), activityPauseBtn: $('activityPauseBtn'), activityStopBtn: $('activityStopBtn'),
+    activityMapPanel: $('activityMapPanel'), activityPanelToggle: $('activityPanelToggle'), activityMapTitle: $('activityMapTitle'), activityMapStatus: $('activityMapStatus'), activityBgStatus: $('activityBgStatus'), activityMapDistance: $('activityMapDistance'), activityMapTime: $('activityMapTime'), activityMapSpeed: $('activityMapSpeed'), activityPauseBtn: $('activityPauseBtn'), activityStopBtn: $('activityStopBtn'),
     targetSelectBtn: $('targetSelectBtn'), targetGuide: $('targetGuide'), targetArrow: $('targetArrow'), targetDistance: $('targetDistance'), targetBearing: $('targetBearing'), targetEta: $('targetEta'), targetClearBtn: $('targetClearBtn'),
     routeFollowGuide: $('routeFollowGuide'), routeFollowName: $('routeFollowName'), routeFollowRemaining: $('routeFollowRemaining'), routeFollowProgress: $('routeFollowProgress'), routeFollowDeviation: $('routeFollowDeviation'),
     finishActivityModal: $('finishActivityModal'), finishSaveBtn: $('finishSaveBtn'), finishDiscardBtn: $('finishDiscardBtn'), finishCancelBtn: $('finishCancelBtn')
@@ -193,7 +220,12 @@
   }
 
   function initMap() {
-    state.map = L.map('map', { zoomControl: false, preferCanvas: true, tap: true }).setView([44.2, 6.7], 8);
+    state.navigation.rotateAvailable = !!(L?.Map?.prototype && typeof L.Map.prototype.setBearing === 'function');
+    const mapOptions = { zoomControl: false, preferCanvas: true, tap: true };
+    if (state.navigation.rotateAvailable) Object.assign(mapOptions, {
+      rotate: true, bearing: 0, touchRotate: true, rotateControl: false
+    });
+    state.map = L.map('map', mapOptions).setView([44.2, 6.7], 8);
     L.control.zoom({ position: 'bottomright' }).addTo(state.map);
 
     state.baseLayers.topo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
@@ -207,6 +239,209 @@
     state.baseLayers.topo.addTo(state.map);
 
     state.map.on('click', handleMapClick);
+
+    // Même comportement que l'APK Capacitor : seuls les gestes réellement initiés
+    // par le doigt déverrouillent le suivi caméra. Les déplacements/rotations faits
+    // par le code ne doivent jamais éteindre le bouton GPS bleu.
+    const mapContainer = state.map.getContainer();
+    const markMapGestureStart = () => {
+      state.navigation.mapGestureActive = true;
+      state.navigation.mapGestureAt = Date.now();
+    };
+    const markMapGestureEnd = () => {
+      state.navigation.mapGestureActive = false;
+    };
+    if (window.PointerEvent) {
+      mapContainer.addEventListener('pointerdown', markMapGestureStart, { passive:true });
+      window.addEventListener('pointerup', markMapGestureEnd, { passive:true });
+      window.addEventListener('pointercancel', markMapGestureEnd, { passive:true });
+    } else {
+      mapContainer.addEventListener('touchstart', markMapGestureStart, { passive:true });
+      window.addEventListener('touchend', markMapGestureEnd, { passive:true });
+      window.addEventListener('touchcancel', markMapGestureEnd, { passive:true });
+      mapContainer.addEventListener('mousedown', markMapGestureStart, { passive:true });
+      window.addEventListener('mouseup', markMapGestureEnd, { passive:true });
+    }
+
+    state.map.on('dragstart', () => {
+      const userInitiated = state.navigation.mapGestureActive ||
+        (Date.now() - Number(state.navigation.mapGestureAt || 0) < 500);
+      if (!userInitiated || !state.mapFollowGps) return;
+      state.mapFollowGps = false;
+      stopAutomaticHeading();
+      updateNavigationControls();
+    });
+
+    if (state.navigation.rotateAvailable) {
+      state.map.on('rotatestart', () => {
+        if (state.navigation.orientationMode !== 'auto') return;
+        state.navigation.orientationMode = 'manual';
+        stopAutomaticHeading();
+        updateNavigationControls();
+      });
+      state.map.on('rotate', updateCompassRose);
+    }
+    updateNavigationControls();
+  }
+
+  function normalizeHeading(deg) {
+    const n = Number(deg);
+    return Number.isFinite(n) ? ((n % 360) + 360) % 360 : null;
+  }
+
+  function screenOrientationAngle() {
+    try {
+      const value = globalThis.screen?.orientation?.angle ?? globalThis.orientation ?? 0;
+      const angle = Number(value);
+      return Number.isFinite(angle) ? angle : 0;
+    } catch (_) { return 0; }
+  }
+
+  function headingFromOrientationEvent(event) {
+    if (!event) return null;
+    if (Number.isFinite(Number(event.webkitCompassHeading))) {
+      return normalizeHeading(Number(event.webkitCompassHeading) + screenOrientationAngle());
+    }
+    if ((event.absolute === true || event.type === 'deviceorientationabsolute') && Number.isFinite(Number(event.alpha))) {
+      return normalizeHeading(360 - Number(event.alpha) + screenOrientationAngle());
+    }
+    return null;
+  }
+
+  function preferredNavigationHeading() {
+    const gps = normalizeHeading(state.navigation.gpsHeading);
+    const speed = Number(state.location?.speed);
+    if (gps != null && Number.isFinite(speed) && speed >= 3) return gps;
+    const fresh = Date.now() - Number(state.navigation.deviceHeadingAt || 0) < 2500;
+    const device = normalizeHeading(state.navigation.deviceHeading);
+    return fresh && device != null ? device : gps;
+  }
+
+  function stopAutomaticHeading() {
+    if (!state.map || !state.navigation.rotateAvailable) return;
+    try {
+      if (typeof state.map.setHeading === 'function') state.map.setHeading(null);
+      else if (typeof state.map.stopHeadingUp === 'function') state.map.stopHeadingUp();
+    } catch (_) {}
+  }
+
+  function applyAutomaticHeading() {
+    // Cette fonction est volontairement "best effort" : une panne de capteur ou
+    // du plugin de rotation ne peut jamais casser le GPS ni la carte.
+    try {
+      if (!state.map || !state.mapFullscreen || !state.navigation.rotateAvailable) return;
+      if (state.navigation.orientationMode !== 'auto') return;
+      if (!state.mapFollowGps) return;
+      const heading = preferredNavigationHeading();
+      if (heading == null || typeof state.map.setHeading !== 'function') return;
+      state.map.setHeading(heading, { ease:0.18, deadzone:1.2 });
+    } catch (err) { console.warn('Orientation carte ignorée', err); }
+  }
+
+  function updateCompassRose() {
+    if (!ui.mapCompassBtn) return;
+    try {
+      const rose = ui.mapCompassBtn.querySelector('.compass-rose');
+      const bearing = typeof state.map?.getBearing === 'function' ? Number(state.map.getBearing()) || 0 : 0;
+      if (rose) rose.style.transform = `rotate(${bearing}deg)`;
+    } catch (_) {}
+  }
+
+  function updateNavigationControls() {
+    if (ui.mapLocateBtn) {
+      ui.mapLocateBtn.classList.toggle('following', !!state.mapFollowGps);
+      ui.mapLocateBtn.title = state.mapFollowGps
+        ? 'Position suivie · toucher pour recentrer'
+        : 'Reprendre le suivi de ma position';
+      ui.mapLocateBtn.setAttribute('aria-pressed', state.mapFollowGps ? 'true' : 'false');
+    }
+    if (!ui.mapCompassBtn) return;
+    const available = state.navigation.rotateAvailable;
+    const mode = state.navigation.orientationMode;
+    ui.mapCompassBtn.classList.toggle('auto', available && mode === 'auto');
+    ui.mapCompassBtn.classList.toggle('north-locked', !available || mode === 'north');
+    ui.mapCompassBtn.classList.toggle('manual', available && mode === 'manual');
+    ui.mapCompassBtn.classList.toggle('follow-paused', !state.mapFollowGps);
+    ui.mapCompassBtn.classList.toggle('rotate-unavailable', !available);
+    const label = ui.mapCompassBtn.querySelector('.compass-mode');
+    if (label) label.textContent = !available ? 'N' : (mode === 'auto' ? 'AUTO' : (mode === 'north' ? 'N' : 'MAN'));
+    const title = !available
+      ? 'Nord fixe · rotation indisponible'
+      : (mode === 'auto'
+          ? 'Orientation automatique active · toucher pour verrouiller le Nord'
+          : (mode === 'north'
+              ? 'Nord verrouillé · toucher pour orientation automatique'
+              : 'Orientation manuelle · toucher pour revenir en automatique'));
+    ui.mapCompassBtn.title = title;
+    ui.mapCompassBtn.setAttribute('aria-label', title);
+    ui.mapCompassBtn.setAttribute('aria-pressed', available && mode === 'auto' ? 'true' : 'false');
+    updateCompassRose();
+  }
+
+  function setOrientationMode(mode, { notify = false } = {}) {
+    const next = mode === 'auto' ? 'auto' : 'north';
+    state.navigation.orientationMode = next;
+    stopAutomaticHeading();
+    if (!state.navigation.rotateAvailable) {
+      state.navigation.orientationMode = 'north';
+      updateNavigationControls();
+      if (notify) toast('🧭 Nord fixe : rotation automatique indisponible.');
+      return;
+    }
+    try {
+      if (state.navigation.orientationMode === 'north') {
+        state.map?.touchRotate?.disable?.();
+        if (typeof state.map?.setBearing === 'function') state.map.setBearing(0);
+        if (notify) toast('🧭 Nord verrouillé.');
+      } else {
+        state.map?.touchRotate?.enable?.();
+        applyAutomaticHeading();
+        if (notify) toast('🧭 Orientation automatique activée.');
+      }
+    } catch (err) { console.warn('Changement orientation ignoré', err); }
+    updateNavigationControls();
+  }
+
+  async function ensureOrientationTracking(fromUserGesture = false) {
+    try {
+      if (state.navigation.orientationListening) return true;
+      if (!state.navigation.rotateAvailable || !('DeviceOrientationEvent' in window)) return false;
+      const requestPermission = window.DeviceOrientationEvent?.requestPermission;
+      if (typeof requestPermission === 'function' && state.navigation.orientationPermission !== 'granted') {
+        if (!fromUserGesture) return false;
+        const result = await requestPermission.call(window.DeviceOrientationEvent);
+        state.navigation.orientationPermission = result;
+        if (result !== 'granted') return false;
+      } else state.navigation.orientationPermission = 'granted';
+      const handle = event => {
+        const heading = headingFromOrientationEvent(event);
+        if (heading == null) return;
+        state.navigation.deviceHeading = heading;
+        state.navigation.deviceHeadingAt = Date.now();
+        applyAutomaticHeading();
+      };
+      window.addEventListener('deviceorientationabsolute', handle, true);
+      window.addEventListener('deviceorientation', handle, true);
+      state.navigation.orientationListening = true;
+      return true;
+    } catch (err) {
+      console.warn('Capteur orientation indisponible', err);
+      return false;
+    }
+  }
+
+  function centerActiveGpsNow(raiseZoom = false) {
+    if (!state.location || !state.map) return false;
+    const zoom = raiseZoom ? Math.max(state.map.getZoom(), 15) : state.map.getZoom();
+    state.map.setView([state.location.lat, state.location.lon], zoom, { animate:false });
+    return true;
+  }
+
+  function enableGpsMapFollow({ raiseZoom = true } = {}) {
+    state.mapFollowGps = true;
+    state.centerOnNextLocation = !centerActiveGpsNow(raiseZoom);
+    updateNavigationControls();
+    try { applyAutomaticHeading(); } catch (_) {}
   }
 
   function handleMapClick(e) {
@@ -233,9 +468,17 @@
     document.body.classList.add('map-fullscreen');
     ui.mapCloseBtn.classList.remove('hidden');
     ui.mapLocateBtn.classList.remove('hidden');
+    ui.mapCompassBtn?.classList.remove('hidden');
     ui.mapZoomControls.classList.remove('hidden');
     syncActivityMapPanel();
-    setTimeout(() => state.map.invalidateSize(), 50);
+    // Orientation facultative : jamais dans le chemin critique du GPS.
+    ensureOrientationTracking(false).catch(() => {});
+    setTimeout(() => {
+      state.map.invalidateSize();
+      if (state.mapFollowGps && state.location) centerActiveGpsNow(false);
+      applyAutomaticHeading();
+      updateNavigationControls();
+    }, 50);
   }
 
   function exitMapFullscreen() {
@@ -244,7 +487,10 @@
     document.body.classList.remove('map-fullscreen');
     ui.mapCloseBtn.classList.add('hidden');
     ui.mapLocateBtn.classList.add('hidden');
+    ui.mapCompassBtn?.classList.add('hidden');
     ui.mapZoomControls.classList.add('hidden');
+    stopAutomaticHeading();
+    try { if (typeof state.map?.setBearing === 'function') state.map.setBearing(0); } catch (_) {}
     syncActivityMapPanel();
     setTimeout(() => state.map.invalidateSize(), 50);
   }
@@ -321,27 +567,37 @@
     }, 650);
   }
 
-  function startLocation(center = true) {
+  function startLocation(center = true, { restart = false } = {}) {
+    // Même comportement caméra que l'APK Capacitor. Le GPS Web reste la source
+    // des points dans la PWA, mais le verrouillage/déverrouillage de la carte est identique.
+    if (center) {
+      enableGpsMapFollow({ raiseZoom:true });
+      ensureOrientationTracking(false).catch(() => {});
+    }
+
+    // GPS PWA « point par point » : chaque nouvelle position fournie par Chrome
+    // est traitée immédiatement. maximumAge=0 évite de reprendre un vieux point
+    // mis en cache. La fréquence réelle reste toutefois décidée par Android/Chrome.
     if (!('geolocation' in navigator)) {
       toast('La géolocalisation n’est pas disponible sur cet appareil.');
       return;
     }
 
-    if (center && state.location) {
-      state.map.setView([state.location.lat, state.location.lon], Math.max(state.map.getZoom(), 15));
-      state.centerOnNextLocation = false;
-    } else if (center) {
-      state.centerOnNextLocation = true;
+    if (restart && state.watchId !== null) {
+      try { navigator.geolocation.clearWatch(state.watchId); } catch (_) {}
+      state.watchId = null;
     }
-
     if (state.watchId !== null) return;
-    ui.gpsBadge.textContent = 'GPS : recherche…';
+
+    ui.gpsBadge.textContent = restart ? 'GPS : reprise…' : 'GPS : recherche…';
     state.watchId = navigator.geolocation.watchPosition(
       updateLocation,
       err => {
         ui.gpsBadge.textContent = 'GPS : erreur';
         toast(err.code === 1 ? 'Autorise la localisation pour utiliser le GPS.' : 'Position GPS indisponible.');
       },
+      // Paramètres éprouvés des v1.10.16/17 : un très petit cache (2 s)
+      // donne à Chrome davantage de latitude pour continuer à livrer des fixes en arrière-plan.
       { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 }
     );
   }
@@ -354,31 +610,102 @@
       accuracy: Number.isFinite(accuracy) ? accuracy : null,
       altitude: Number.isFinite(altitude) ? altitude : null,
       speed: Number.isFinite(speed) ? speed * 3.6 : null,
-      heading: Number.isFinite(heading) ? heading : null,
+      heading: Number.isFinite(heading) ? normalizeHeading(heading) : null,
       timestamp: pos.timestamp || Date.now()
     };
+    // Heure réelle à laquelle Chrome a livré ce fix au JavaScript. On l'utilise
+    // au retour au premier plan pour conserver le watcher existant (comportement
+    // des v1.10.16/17) au lieu de le couper trop tôt et perdre des fixes en attente.
+    lastGpsCallbackAt = Date.now();
+    if (state.location.heading != null) state.navigation.gpsHeading = state.location.heading;
     const ll = [latitude, longitude];
 
-    if (!state.locationMarker) {
-      const icon = L.divIcon({ className: '', html: '<div class="user-dot"></div>', iconSize: [18,18], iconAnchor:[9,9] });
-      state.locationMarker = L.marker(ll, { icon, zIndexOffset: 1000 }).addTo(state.map);
-      state.accuracyCircle = L.circle(ll, { radius: accuracy || 10, weight: 1, fillOpacity: .07, opacity: .35 }).addTo(state.map);
-    } else {
-      state.locationMarker.setLatLng(ll);
-      state.accuracyCircle.setLatLng(ll).setRadius(accuracy || 10);
+    // Mode arrière-plan PWA : si Chrome nous livre un fix pendant que la page est
+    // masquée, on le sauvegarde IMMÉDIATEMENT avant toute opération Leaflet, météo,
+    // rotation ou interface. C'est volontairement minimal pour laisser le maximum
+    // de chances au navigateur de continuer à distribuer les positions.
+    if (document.visibilityState === 'hidden' && state.activity.status === 'recording') {
+      backgroundGpsReceived += 1;
+      const before = state.activity.points.length;
+      try { recordActivityPoint(state.location); } catch (err) { console.warn('Point GPS arrière-plan ignoré', err); }
+      const accepted = state.activity.points.length > before;
+      if (accepted) backgroundGpsAccepted += 1;
+      noteBackgroundGpsFix(accepted);
+      persistActivitySnapshot(true);
+      return;
     }
 
-    ui.gpsBadge.textContent = `GPS : ±${Math.round(accuracy || 0)} m`;
-    if (Number.isFinite(altitude)) ui.elevationNow.textContent = `${Math.round(altitude)} m`;
+    // PRIORITÉ GPS : dès qu'un fix arrive, le statut et la caméra sont mis à jour
+    // AVANT les couches graphiques secondaires. Une erreur Leaflet sur le cercle de
+    // précision ne doit jamais pouvoir laisser « GPS : recherche… », bloquer le
+    // recentrage ou empêcher l'enregistrement de la trace.
+    if (ui.gpsBadge) {
+      ui.gpsBadge.textContent = Number.isFinite(accuracy)
+        ? `GPS : ±${Math.round(accuracy)} m`
+        : 'GPS : position reçue';
+    }
+    if (Number.isFinite(altitude) && ui.elevationNow) ui.elevationNow.textContent = `${Math.round(altitude)} m`;
 
-    if (state.centerOnNextLocation) {
-      state.map.setView(ll, Math.max(state.map.getZoom(), 15));
+    const mustFollow = !!(state.mapFollowGps || state.centerOnNextLocation);
+    const raiseZoom = !!state.centerOnNextLocation;
+    if (mustFollow) {
+      try { centerActiveGpsNow(raiseZoom); } catch (err) { console.warn('Recentrage GPS ignoré', err); }
       state.centerOnNextLocation = false;
     }
 
-    if (state.activity.status === 'recording') recordActivityPoint(state.location);
-    if (state.activity.followRoute) updateRouteFollowGuide(state.location);
-    if (state.activity.target) updateTargetGuide();
+    // Le point bleu est essentiel, mais son rendu ne doit pas casser la chaîne GPS.
+    try {
+      if (!state.locationMarker) {
+        const icon = L.divIcon({ className: '', html: '<div class="user-dot"></div>', iconSize: [18,18], iconAnchor:[9,9] });
+        state.locationMarker = L.marker(ll, { icon, zIndexOffset: 1000 }).addTo(state.map);
+      } else {
+        state.locationMarker.setLatLng(ll);
+      }
+      state.locationMarker?.bringToFront?.();
+    } catch (err) {
+      console.warn('Affichage du point GPS ignoré', err);
+    }
+
+    // Le cercle de précision est purement décoratif. Avec une carte rotative,
+    // certains rendus Canvas/SVG peuvent échouer : on l'isole complètement.
+    try {
+      if (!state.accuracyCircle) {
+        state.accuracyCircle = L.circle(ll, {
+          radius: Number.isFinite(accuracy) ? Math.max(1, accuracy) : 10,
+          weight: 1, fillOpacity: .07, opacity: .35
+        }).addTo(state.map);
+      } else {
+        state.accuracyCircle.setLatLng(ll).setRadius(Number.isFinite(accuracy) ? Math.max(1, accuracy) : 10);
+      }
+    } catch (err) {
+      console.warn('Cercle de précision GPS ignoré', err);
+      try {
+        if (state.accuracyCircle && state.map?.hasLayer?.(state.accuracyCircle)) state.map.removeLayer(state.accuracyCircle);
+      } catch (_) {}
+      state.accuracyCircle = null;
+    }
+
+    // L'enregistrement doit continuer même si un composant visuel de la carte a un souci.
+    try {
+      if (state.activity.status === 'recording') recordActivityPoint(state.location);
+    } catch (err) { console.warn('Enregistrement point GPS ignoré', err); }
+
+    try { applyAutomaticHeading(); } catch (_) {}
+
+    // La rotation peut modifier la transformation du conteneur Leaflet. Si le suivi
+    // est verrouillé (bouton GPS bleu), on recentre une seconde fois juste après la
+    // rotation afin que le point reste réellement au centre de l'écran.
+    if (mustFollow) {
+      const fixTs = state.location.timestamp;
+      setTimeout(() => {
+        if (!state.mapFollowGps || !state.location || state.location.timestamp !== fixTs) return;
+        try { centerActiveGpsNow(false); } catch (_) {}
+      }, 60);
+    }
+    try { updateNavigationControls(); } catch (_) {}
+
+    try { if (state.activity.followRoute) updateRouteFollowGuide(state.location); } catch (_) {}
+    try { if (state.activity.target) updateTargetGuide(); } catch (_) {}
     if (['recording','paused'].includes(state.activity.status)) persistActivitySnapshot();
     scheduleWeather(latitude, longitude);
 
@@ -1283,12 +1610,24 @@
     });
   }
 
+  function redMapPointIcon() {
+    return L.divIcon({
+      className: 'rr-red-map-point-wrap',
+      html: '<span class="rr-red-map-point"></span>',
+      iconSize: [22, 22],
+      iconAnchor: [11, 11]
+    });
+  }
+
   function showElevationPointOnMap(point) {
     if (!state.map || !point || !Number.isFinite(point.lat) || !Number.isFinite(point.lon)) return;
+    const ll = [Number(point.lat), Number(point.lon)];
+    // Comme dans l'APK Capacitor : un vrai L.marker est recalculé correctement
+    // par leaflet-rotate. Un circleMarker SVG pouvait se décaler du tracé.
     if (!state.elevationHoverMarker) {
-      state.elevationHoverMarker = L.circleMarker([point.lat, point.lon], { radius: 8, color: '#fff', weight: 3, fillColor: '#e11d48', fillOpacity: 1, pane: 'markerPane' }).addTo(state.map);
-    } else state.elevationHoverMarker.setLatLng([point.lat, point.lon]);
-    state.elevationHoverMarker.bindTooltip(`${Math.round(Number(point.ele) || 0)} m`, { direction:'top', offset:[0,-8] }).openTooltip();
+      state.elevationHoverMarker = L.marker(ll, { icon: redMapPointIcon(), zIndexOffset: 1200, interactive: false }).addTo(state.map);
+    } else state.elevationHoverMarker.setLatLng(ll);
+    state.elevationHoverMarker.bindTooltip(`${Math.round(Number(point.ele) || 0)} m`, { direction:'top', offset:[0,-10] }).openTooltip();
   }
 
   function updateElevationChartProgress(chartKey, ratio) {
@@ -1419,9 +1758,67 @@
     }
   }
 
+  function setFinderMapDetailCollapsed(collapsed) {
+    if (!ui.finderMapDetail) return;
+    ui.finderMapDetail.classList.toggle('collapsed', !!collapsed);
+    if (ui.finderMapDetailToggle) {
+      ui.finderMapDetailToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      ui.finderMapDetailToggle.setAttribute('aria-label', collapsed ? 'Agrandir les détails du parcours' : 'Réduire les détails du parcours');
+    }
+    if (!collapsed) ui.finderMapDetail.scrollTop = 0;
+  }
+
   function closeFinderMapDetail() {
     ui.finderMapDetail?.classList.add('hidden');
+    ui.finderMapDetail?.classList.remove('collapsed');
     if (state.hikeFinder.active) ui.hikeFinderPanel?.classList.remove('hidden');
+  }
+
+  function bindFinderMapDetailSheet() {
+    const panel = ui.finderMapDetail;
+    if (!panel || panel.dataset.sheetBound === '1') return;
+    panel.dataset.sheetBound = '1';
+    const reset = () => { panel.classList.remove('sheet-dragging'); panel.style.removeProperty('--sheet-drag-y'); };
+    const applySwipe = (dy, dx = 0) => {
+      if (!Number.isFinite(dy) || Math.abs(dy) < 38 || Math.abs(dy) < Math.abs(dx) * 1.10) return false;
+      if (dy > 0) {
+        if (panel.classList.contains('collapsed')) closeFinderMapDetail();
+        else setFinderMapDetailCollapsed(true);
+      } else setFinderMapDetailCollapsed(false);
+      return true;
+    };
+    ui.finderMapDetailToggle?.addEventListener('click', e => { e.stopPropagation(); setFinderMapDetailCollapsed(!panel.classList.contains('collapsed')); });
+    let pointerId = null, startY = 0, startX = 0, lastY = 0, lastX = 0;
+    const canStart = target => {
+      if (target.closest('button:not(.finder-detail-sheet-toggle),input,a,.elevation-chart')) return false;
+      const grip = !!target.closest('.finder-detail-sheet-toggle,.finder-detail-head');
+      return grip || panel.classList.contains('collapsed') || panel.scrollTop <= 2;
+    };
+    panel.addEventListener('pointerdown', e => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      if (!canStart(e.target)) return;
+      pointerId = e.pointerId; startY = lastY = e.clientY; startX = lastX = e.clientX;
+      panel.classList.add('sheet-dragging');
+      try { panel.setPointerCapture(pointerId); } catch (_) {}
+    });
+    panel.addEventListener('pointermove', e => {
+      if (pointerId == null || e.pointerId !== pointerId) return;
+      lastY = e.clientY; lastX = e.clientX;
+      const dy = lastY - startY;
+      if (Math.abs(dy) > 4) {
+        panel.style.setProperty('--sheet-drag-y', `${Math.max(-36, Math.min(160, dy * .76))}px`);
+        if (e.cancelable) e.preventDefault();
+      }
+    }, { passive:false });
+    const finish = e => {
+      if (pointerId == null || e.pointerId !== pointerId) return;
+      const dy = (Number.isFinite(e.clientY) ? e.clientY : lastY) - startY;
+      const dx = (Number.isFinite(e.clientX) ? e.clientX : lastX) - startX;
+      try { panel.releasePointerCapture(pointerId); } catch (_) {}
+      pointerId = null; reset(); applySwipe(dy, dx);
+    };
+    panel.addEventListener('pointerup', finish);
+    panel.addEventListener('pointercancel', () => { pointerId = null; reset(); });
   }
 
   function closeFinderDetailCard() { ui.finderDetailCard?.classList.add('hidden'); }
@@ -2610,7 +3007,8 @@
         ele: hasElevation(p.ele) ? Number(p.ele) : null,
         time: p.time || null,
         timestamp: Number(p.timestamp) || null,
-        accuracy: Number.isFinite(Number(p.accuracy)) ? Number(p.accuracy) : null
+        accuracy: Number.isFinite(Number(p.accuracy)) ? Number(p.accuracy) : null,
+        breakBefore: Boolean(p.breakBefore)
       })).filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon)),
       distanceKm: Number(a.distanceKm) || 0,
       currentSpeed: Number(a.currentSpeed) || 0,
@@ -2637,6 +3035,136 @@
     lastActivityPersistAt = 0;
   }
 
+  function activityTrackLatLngs(points = state.activity.points) {
+    const segments = [];
+    let segment = [];
+    for (const p of points || []) {
+      if (!Number.isFinite(Number(p.lat)) || !Number.isFinite(Number(p.lon))) continue;
+      if (p.breakBefore && segment.length) {
+        segments.push(segment);
+        segment = [];
+      }
+      segment.push([Number(p.lat), Number(p.lon)]);
+    }
+    if (segment.length) segments.push(segment);
+    if (segments.length <= 1) return segments[0] || [];
+    return segments;
+  }
+
+  function activityDistanceFromPoints(points) {
+    let total = 0;
+    for (let i = 1; i < (points || []).length; i++) {
+      if (points[i]?.breakBefore) continue;
+      total += haversine(points[i - 1], points[i]);
+    }
+    return total;
+  }
+
+  function ensureActivityUiTimer() {
+    clearInterval(state.activity.timer);
+    state.activity.timer = null;
+    if (['recording','paused','finished'].includes(state.activity.status)) {
+      state.activity.timer = setInterval(updateActivityUI, 1000);
+      updateActivityUI();
+    }
+  }
+
+  function readPwaBackgroundSession() {
+    try { return JSON.parse(localStorage.getItem(PWA_BG_SESSION_KEY) || 'null'); }
+    catch (_) { return null; }
+  }
+
+  function writePwaBackgroundSession(data) {
+    try { localStorage.setItem(PWA_BG_SESSION_KEY, JSON.stringify(data)); } catch (_) {}
+  }
+
+  function clearPwaBackgroundSession() {
+    try { localStorage.removeItem(PWA_BG_SESSION_KEY); } catch (_) {}
+  }
+
+  function showActivityBackgroundStatus(text, kind = 'info') {
+    if (!ui.activityBgStatus) return;
+    ui.activityBgStatus.textContent = text || '';
+    ui.activityBgStatus.classList.toggle('hidden', !text);
+    ui.activityBgStatus.dataset.kind = kind;
+  }
+
+  function beginPwaBackgroundSession() {
+    if (!['recording','paused'].includes(state.activity.status)) return;
+    const hiddenAt = Date.now();
+    pwaHiddenAt = hiddenAt;
+    pwaPointCountAtHide = state.activity.points.length;
+    backgroundGpsReceived = 0;
+    backgroundGpsAccepted = 0;
+    pendingBackgroundGapBreak = false;
+    writePwaBackgroundSession({
+      hiddenAt,
+      pointCountAtHide: pwaPointCountAtHide,
+      received: 0,
+      accepted: 0,
+      lastFixAt: lastGpsCallbackAt || 0,
+      status: state.activity.status
+    });
+    persistActivitySnapshot(true);
+  }
+
+  function noteBackgroundGpsFix(accepted) {
+    const bg = readPwaBackgroundSession() || {
+      hiddenAt: pwaHiddenAt || Date.now(),
+      pointCountAtHide: pwaPointCountAtHide || state.activity.points.length,
+      received: 0,
+      accepted: 0,
+      status: state.activity.status
+    };
+    bg.received = Number(bg.received || 0) + 1;
+    if (accepted) bg.accepted = Number(bg.accepted || 0) + 1;
+    bg.lastFixAt = Date.now();
+    bg.latestPointCount = state.activity.points.length;
+    writePwaBackgroundSession(bg);
+  }
+
+  function consumePwaBackgroundSession({ restored = false } = {}) {
+    const bg = readPwaBackgroundSession();
+    const hiddenAt = Number(bg?.hiddenAt || pwaHiddenAt || 0);
+    if (!hiddenAt) return null;
+    const hiddenMs = Math.max(0, Date.now() - hiddenAt);
+    const baseCount = Number(bg?.pointCountAtHide ?? pwaPointCountAtHide ?? state.activity.points.length);
+    const accepted = Math.max(Number(bg?.accepted || 0), Math.max(0, state.activity.points.length - baseCount));
+    const received = Math.max(Number(bg?.received || 0), accepted);
+    clearPwaBackgroundSession();
+    pwaHiddenAt = 0;
+    backgroundGpsReceived = 0;
+    backgroundGpsAccepted = 0;
+    pwaPointCountAtHide = state.activity.points.length;
+
+    if (hiddenMs >= 1200 && state.activity.status === 'recording') {
+      if (accepted > 0) {
+        const msg = `Arrière-plan : ${accepted} point${accepted > 1 ? 's' : ''} GPS récupéré${accepted > 1 ? 's' : ''}`;
+        showActivityBackgroundStatus(msg, 'ok');
+        setAlert('safe', '↻', restored ? 'Activité restaurée' : 'Activité reprise', `${accepted} point${accepted > 1 ? 's' : ''} GPS enregistré${accepted > 1 ? 's' : ''} pendant l’arrière-plan.`);
+        toast(`${restored ? 'Activité restaurée' : 'Activité reprise'} · ${accepted} point${accepted > 1 ? 's' : ''} GPS récupéré${accepted > 1 ? 's' : ''}.`);
+      } else {
+        pendingBackgroundGapBreak = hiddenMs >= 15000;
+        const msg = `Arrière-plan : 0 point GPS reçu (${Math.round(hiddenMs/1000)} s)`;
+        showActivityBackgroundStatus(msg, 'warn');
+        setAlert('warn', '↻', restored ? 'Activité restaurée' : 'Activité reprise', `Chrome n’a fourni aucun point GPS pendant ${Math.round(hiddenMs/1000)} s en arrière-plan.`);
+        toast(`${restored ? 'Activité restaurée' : 'Activité reprise'} · aucun point GPS reçu en arrière-plan.`);
+      }
+    }
+    return { hiddenMs, accepted, received };
+  }
+
+  function resumePwaActivityAfterForeground(reason = 'foreground') {
+    if (!['recording','paused'].includes(state.activity.status)) return false;
+    ensureActivityUiTimer();
+    persistActivitySnapshot(true);
+    if (state.watchId === null) startLocation(false);
+    if (state.mapFollowGps) state.centerOnNextLocation = true;
+    const info = consumePwaBackgroundSession({ restored:false });
+    if (!info && state.activity.status === 'recording') showActivityBackgroundStatus('GPS actif · suivi en cours', 'info');
+    return true;
+  }
+
   function restoreActivitySnapshot() {
     let snap;
     try { snap = JSON.parse(localStorage.getItem(ACTIVE_ACTIVITY_KEY) || 'null'); }
@@ -2654,7 +3182,8 @@
       ele:hasElevation(p.ele) ? Number(p.ele) : null,
       time:p.time || null,
       timestamp:Number(p.timestamp) || Date.now(),
-      accuracy:Number.isFinite(Number(p.accuracy)) ? Number(p.accuracy) : null
+      accuracy:Number.isFinite(Number(p.accuracy)) ? Number(p.accuracy) : null,
+      breakBefore:Boolean(p.breakBefore)
     })).filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon)) : [];
 
     const mode = ACTIVITY_PROFILES[snap.mode] ? snap.mode : 'hike';
@@ -2670,14 +3199,14 @@
     state.activity.pausedMs = Number(snap.pausedMs) || 0;
     state.activity.finishedAt = Number(snap.finishedAt) || null;
     state.activity.points = pts;
-    state.activity.distanceKm = Number(snap.distanceKm) || (pts.length > 1 ? routeDistance(pts) : 0);
+    state.activity.distanceKm = Number(snap.distanceKm) || (pts.length > 1 ? activityDistanceFromPoints(pts) : 0);
     state.activity.currentSpeed = snap.status === 'recording' ? (Number(snap.currentSpeed) || 0) : 0;
     state.activity.name = snap.name || `${getActivityProfile(mode).label} restaurée`;
     state.activity.followRoute = followRoute;
     state.activity.followRouteCumKm = followRoute ? buildCumulativeRouteKm(followRoute.points) : null;
     state.activity.followRouteLastIndex = Number.isInteger(snap.followRouteLastIndex) ? snap.followRouteLastIndex : null;
     state.activity.offRouteAlerted = false;
-    state.activity.line = L.polyline(pts.map(p => [p.lat,p.lon]), { color:'#fb7185', weight:5, opacity:.96 }).addTo(state.map);
+    state.activity.line = L.polyline(activityTrackLatLngs(pts), { color:'#fb7185', weight:5, opacity:.96 }).addTo(state.map);
 
     if (followRoute) {
       state.route = followRoute;
@@ -2694,15 +3223,18 @@
       ui.targetGuide.classList.remove('hidden');
     }
 
-    clearInterval(state.activity.timer);
-    state.activity.timer = setInterval(updateActivityUI, 1000);
-    updateActivityUI();
+    ensureActivityUiTimer();
     syncActivityMapPanel();
 
     if (snap.status === 'recording' || snap.status === 'paused') {
+      enableGpsMapFollow({ raiseZoom:false });
+      state.centerOnNextLocation = true;
       startLocation(false);
-      setAlert('safe', '↻', 'Activité restaurée', `${getActivityProfile(mode).label} reprise après le rechargement de la page.`);
-      toast(snap.status === 'paused' ? 'Activité restaurée en pause.' : 'Activité restaurée · GPS repris.');
+      const bgInfo = consumePwaBackgroundSession({ restored:true });
+      if (!bgInfo) {
+        setAlert('safe', '↻', 'Activité restaurée', `${getActivityProfile(mode).label} reprise après le rechargement de la page.`);
+        toast(snap.status === 'paused' ? 'Activité restaurée en pause.' : 'Activité restaurée · GPS repris.');
+      }
       if (snap.mapFullscreen) {
         setTimeout(() => {
           showAppScreen('map', { scroll:false });
@@ -2747,18 +3279,17 @@
       : `${activityProfile.label} ${new Date().toLocaleString('fr-FR', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})}`;
     state.activity.line = L.polyline([], { color:'#fb7185', weight:5, opacity:.96 }).addTo(state.map);
     persistActivitySnapshot(true);
+    enableGpsMapFollow({ raiseZoom:true });
     startLocation(false);
     if (state.location) recordActivityPoint(state.location, true);
-    clearInterval(state.activity.timer);
-    state.activity.timer = setInterval(updateActivityUI, 1000);
-    updateActivityUI();
+    ensureActivityUiTimer();
     if (routeToFollow) {
       drawRoute(false);
       setAlert('safe', '🧭', 'Suivi du GPX en cours', `${routeToFollow.name} · le tracé bleu reste affiché et ta trace réelle est enregistrée en rose.`);
       toast(`Parcours démarré : ${routeToFollow.name}`);
-      setTimeout(() => { if (state.routeLine) state.map.fitBounds(state.routeLine.getBounds(), { padding: [34, 34] }); }, 100);
+      setTimeout(() => { if (!state.location && state.routeLine) state.map.fitBounds(state.routeLine.getBounds(), { padding: [34, 34] }); else if (state.location) centerActiveGpsNow(true); }, 100);
     } else {
-      setAlert('safe', '▶️', 'Activité en cours', 'La trace GPS est enregistrée. La carte reste libre : ◎ te recentre sur ta position.');
+      setAlert('safe', '▶️', 'Activité en cours', 'La trace GPS est enregistrée. Bouton GPS bleu = position suivie ; déplace la carte pour la libérer.');
       toast('Enregistrement GPS démarré.');
     }
 
@@ -2777,34 +3308,64 @@
     const accuracy = Number(loc.accuracy);
     if (!force && Number.isFinite(accuracy) && accuracy > 60) return;
 
-    const p = {
-      lat: loc.lat,
-      lon: loc.lon,
-      ele: Number.isFinite(loc.altitude) ? loc.altitude : null,
-      time: new Date(loc.timestamp || Date.now()).toISOString(),
-      timestamp: loc.timestamp || Date.now(),
-      accuracy: Number.isFinite(accuracy) ? accuracy : null
-    };
     const prev = state.activity.points[state.activity.points.length - 1];
+    let timestamp = Number(loc.timestamp);
+    if (!Number.isFinite(timestamp) || timestamp <= 0) timestamp = Date.now();
+    // Certains WebView/Chrome peuvent renvoyer deux fixes avec le même timestamp.
+    // On garde un temps monotone afin que le filtre de vitesse ne rejette pas toute la trace.
+    if (prev && timestamp <= Number(prev.timestamp || 0)) timestamp = Math.max(Date.now(), Number(prev.timestamp || 0) + 250);
+
+    const p = {
+      lat: Number(loc.lat),
+      lon: Number(loc.lon),
+      ele: Number.isFinite(loc.altitude) ? loc.altitude : null,
+      time: new Date(timestamp).toISOString(),
+      timestamp,
+      accuracy: Number.isFinite(accuracy) ? accuracy : null,
+      breakBefore: false
+    };
+    if (!Number.isFinite(p.lat) || !Number.isFinite(p.lon)) return;
+
     if (prev) {
       const d = haversine(prev, p);
-      const dt = Math.max(0.5, (p.timestamp - prev.timestamp) / 1000);
+      const dt = Math.max(0.25, (p.timestamp - Number(prev.timestamp || p.timestamp)) / 1000);
       const computedSpeed = (d / dt) * 3600;
-      const maxPlausible = getActivityProfile().maxPlausible;
-      if (computedSpeed > maxPlausible) return;
-      if (!force && d < 0.002 && dt < 8) {
-        state.activity.currentSpeed = Number.isFinite(loc.speed) ? loc.speed : computedSpeed;
+      const profile = getActivityProfile();
+
+      // Rejet uniquement des vrais sauts GPS. Un petit déplacement ne doit pas être
+      // perdu à cause d'un timestamp très rapproché : c'était une cause possible de
+      // trace vide dans la PWA.
+      if (!force && d > 0.05 && computedSpeed > profile.maxPlausible) return;
+
+      // Point par point : on ne supprime que les doublons quasi identiques.
+      if (!force && (d < 0.0005 || (d < 0.0008 && dt < 2.5))) {
+        state.activity.currentSpeed = Number.isFinite(loc.speed) ? Math.max(0, loc.speed) : computedSpeed;
         updateActivityUI();
         return;
       }
-      state.activity.distanceKm += d;
-      state.activity.currentSpeed = Number.isFinite(loc.speed) ? Math.max(0, loc.speed) : computedSpeed;
+
+      // Si Chrome n'a livré AUCUN point pendant une longue période masquée, ne
+      // relie pas artificiellement l'ancien point au nouveau. En revanche, dès que
+      // des points ont été reçus en arrière-plan, ils restent reliés comme en v16/17.
+      if (pendingBackgroundGapBreak && !force) {
+        p.breakBefore = true;
+        pendingBackgroundGapBreak = false;
+        state.activity.currentSpeed = Number.isFinite(loc.speed) ? Math.max(0, loc.speed) : 0;
+      } else {
+        state.activity.distanceKm += d;
+        state.activity.currentSpeed = Number.isFinite(loc.speed) ? Math.max(0, loc.speed) : computedSpeed;
+      }
     } else {
       state.activity.currentSpeed = Number.isFinite(loc.speed) ? Math.max(0, loc.speed) : 0;
     }
 
     state.activity.points.push(p);
-    state.activity.line.setLatLngs(state.activity.points.map(x => [x.lat, x.lon]));
+    if (!state.activity.line) {
+      state.activity.line = L.polyline([], { color:'#fb7185', weight:5, opacity:.96 }).addTo(state.map);
+    }
+    state.activity.line.setLatLngs(activityTrackLatLngs());
+    state.activity.line.bringToFront?.();
+    state.locationMarker?.bringToFront?.();
     updateActivityUI();
     persistActivitySnapshot();
   }
@@ -2965,11 +3526,11 @@
       ui.activityExportBtn.classList.add('hidden');
       ui.activityHelp.textContent = a.status === 'paused'
         ? 'Activité en pause.'
-        : (a.followRoute ? `Suivi du GPX « ${a.followRoute.name} » en cours.` : 'Enregistrement GPS en cours. Le déplacement de la carte ne coupe pas le suivi.');
+        : (a.followRoute ? `Suivi du GPX « ${a.followRoute.name} » en cours.` : 'Enregistrement GPS en cours. Déplace la carte pour libérer le centrage ; ◎ pour le reprendre.');
     }
 
     ui.activityMapTitle.textContent = `${activityProfile.icon} ${activityProfile.label}`;
-    ui.activityMapStatus.textContent = a.status === 'paused' ? 'EN PAUSE' : 'GPS · enregistrement';
+    ui.activityMapStatus.textContent = a.status === 'paused' ? `EN PAUSE · ${a.points.length} pts` : `GPS · ${a.points.length} pts · enregistrement`;
     ui.activityMapDistance.textContent = distance;
     ui.activityMapTime.textContent = time;
     ui.activityMapSpeed.textContent = speed;
@@ -3009,6 +3570,49 @@
   function toggleActivityPanel() {
     if (!ui.activityMapPanel) return;
     setActivityPanelCollapsed(!ui.activityMapPanel.classList.contains('collapsed'));
+  }
+
+  function bindActivityPanelSheet() {
+    const panel = ui.activityMapPanel;
+    if (!panel || panel.dataset.sheetBound === '1') return;
+    panel.dataset.sheetBound = '1';
+    const reset = () => { panel.classList.remove('sheet-dragging'); panel.style.removeProperty('--activity-sheet-drag-y'); };
+    const applySwipe = (dy, dx = 0) => {
+      if (!Number.isFinite(dy) || Math.abs(dy) < 38 || Math.abs(dy) < Math.abs(dx) * 1.12) return false;
+      setActivityPanelCollapsed(dy > 0);
+      return true;
+    };
+    let pointerId = null, startY = 0, startX = 0, lastY = 0, lastX = 0;
+    const canStart = target => {
+      if (target.closest('button:not(.activity-panel-toggle),input,a')) return false;
+      const grip = !!target.closest('.activity-panel-toggle,.activity-map-head');
+      return grip || panel.classList.contains('collapsed') || panel.scrollTop <= 2;
+    };
+    panel.addEventListener('pointerdown', e => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      if (!canStart(e.target)) return;
+      pointerId = e.pointerId; startY = lastY = e.clientY; startX = lastX = e.clientX;
+      panel.classList.add('sheet-dragging');
+      try { panel.setPointerCapture(pointerId); } catch (_) {}
+    });
+    panel.addEventListener('pointermove', e => {
+      if (pointerId == null || e.pointerId !== pointerId) return;
+      lastY = e.clientY; lastX = e.clientX;
+      const dy = lastY - startY;
+      if (Math.abs(dy) > 4) {
+        panel.style.setProperty('--activity-sheet-drag-y', `${Math.max(-70, Math.min(180, dy * .78))}px`);
+        if (e.cancelable) e.preventDefault();
+      }
+    }, { passive:false });
+    const finish = e => {
+      if (pointerId == null || e.pointerId !== pointerId) return;
+      const dy = (Number.isFinite(e.clientY) ? e.clientY : lastY) - startY;
+      const dx = (Number.isFinite(e.clientX) ? e.clientX : lastX) - startX;
+      try { panel.releasePointerCapture(pointerId); } catch (_) {}
+      pointerId = null; reset(); applySwipe(dy, dx);
+    };
+    panel.addEventListener('pointerup', finish);
+    panel.addEventListener('pointercancel', () => { pointerId = null; reset(); });
   }
 
   function syncActivityMapPanel() {
@@ -3059,7 +3663,7 @@
     if (rp && Number.isFinite(Number(rp.lat)) && Number.isFinite(Number(rp.lon))) {
       const rll = [Number(rp.lat), Number(rp.lon)];
       if (!state.activity.routeProgressMarker) {
-        state.activity.routeProgressMarker = L.circleMarker(rll, { radius:8, color:'#fff', weight:3, fillColor:'#e11d48', fillOpacity:1, pane:'markerPane' }).addTo(state.map);
+        state.activity.routeProgressMarker = L.marker(rll, { icon:redMapPointIcon(), zIndexOffset:1200, interactive:false }).addTo(state.map);
       } else state.activity.routeProgressMarker.setLatLng(rll);
       const altTxt = hasElevation(rp.ele) ? ` · ${Math.round(Number(rp.ele))} m` : '';
       state.activity.routeProgressMarker.bindTooltip(`${Math.round(progress)} %${altTxt}`, { direction:'top', offset:[0,-8] });
@@ -3256,12 +3860,18 @@
 
   function downloadGpx(name, points, type = 'route', activityType = '') {
     const safeName = (name || 'Rando Radar').replace(/[<>:"/\\|?*]+/g, '-').trim() || 'Rando-Radar';
-    const trkpts = points.map(p => {
+    const makeTrkpt = p => {
       const ele = Number.isFinite(Number(p.ele)) ? `<ele>${Number(p.ele).toFixed(1)}</ele>` : '';
       const time = p.time ? `<time>${new Date(p.time).toISOString()}</time>` : '';
       return `      <trkpt lat="${Number(p.lat).toFixed(7)}" lon="${Number(p.lon).toFixed(7)}">${ele}${time}</trkpt>`;
-    }).join('\n');
-    const gpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Rando Radar" xmlns="http://www.topografix.com/GPX/1/1">\n  <metadata><name>${xmlEscape(name || safeName)}</name></metadata>\n  <trk><name>${xmlEscape(name || safeName)}</name><type>${xmlEscape(type === 'activity' ? (activityType || 'activity') : 'route')}</type><trkseg>\n${trkpts}\n  </trkseg></trk>\n</gpx>`;
+    };
+    const segments = [[]];
+    for (const p of points || []) {
+      if (type === 'activity' && p.breakBefore && segments[segments.length - 1].length) segments.push([]);
+      segments[segments.length - 1].push(p);
+    }
+    const trksegs = segments.filter(seg => seg.length).map(seg => `  <trkseg>\n${seg.map(makeTrkpt).join('\n')}\n  </trkseg>`).join('\n');
+    const gpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Rando Radar" xmlns="http://www.topografix.com/GPX/1/1">\n  <metadata><name>${xmlEscape(name || safeName)}</name></metadata>\n  <trk><name>${xmlEscape(name || safeName)}</name><type>${xmlEscape(type === 'activity' ? (activityType || 'activity') : 'route')}</type>\n${trksegs}\n  </trk>\n</gpx>`;
     const blob = new Blob([gpx], { type:'application/gpx+xml;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -3460,6 +4070,45 @@
     offlineUI.progress.classList.toggle('hidden', !show);
     if (offlineUI.progressTitle) offlineUI.progressTitle.textContent = title;
     if (offlineUI.progressText) offlineUI.progressText.textContent = text;
+  }
+
+  async function probeInternetAccess({ force = false } = {}) {
+    const now = Date.now();
+    if (!force && lastInternetProbeOk !== null && now - lastInternetProbeAt < 8000) return lastInternetProbeOk;
+    if (internetProbePromise) return internetProbePromise;
+    internetProbePromise = (async () => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 3500);
+      try {
+        // no-cors suffit ici : on vérifie uniquement qu'Internet répond réellement.
+        await fetch(`https://tile.openstreetmap.org/0/0/0.png?rr=${now}`, {
+          mode:'no-cors', cache:'no-store', signal:controller.signal
+        });
+        lastInternetProbeOk = true;
+      } catch (_) {
+        lastInternetProbeOk = false;
+      } finally {
+        clearTimeout(timer);
+        lastInternetProbeAt = Date.now();
+        internetProbePromise = null;
+      }
+      return lastInternetProbeOk;
+    })();
+    return internetProbePromise;
+  }
+
+  async function recoverOnlineMapIfPossible({ silent = true } = {}) {
+    if (state.offline.activePackage && state.offline.forced) return false;
+    const online = navigator.onLine || await probeInternetAccess({ force:true });
+    if (!online) return false;
+    if (state.offline.activePackage || document.getElementById('offlineMapStatus')) {
+      deactivateOfflineMap({ restoreOnline:true });
+      if (!silent) toast('Connexion retrouvée : carte en ligne réactivée.');
+    } else {
+      setOfflineMapStatusVisible(false);
+      document.querySelectorAll('[data-basemap]').forEach(btn => btn.disabled = false);
+    }
+    return true;
   }
 
   function updateOfflineNetworkBadge() {
@@ -3739,6 +4388,13 @@
   }
 
   async function handleOfflineNetworkLoss() {
+    // navigator.onLine peut brièvement passer à false lors d'un changement 4G/Wi-Fi
+    // ou du retour dans une PWA. On vérifie Internet avant de basculer la carte.
+    if (await probeInternetAccess({ force:true })) {
+      await recoverOnlineMapIfPossible({ silent:true });
+      updateOfflineNetworkBadge();
+      return;
+    }
     updateOfflineNetworkBadge();
     if (state.offline.activePackage) return;
     const pkg = await chooseOfflinePackageForCurrentPosition();
@@ -3746,8 +4402,6 @@
       activateOfflinePackage(pkg, { fit:false, forced:false });
       toast(`Mode hors ligne : ${pkg.name}`);
     } else {
-      // Ne pas effacer brutalement la carte déjà à l'écran : les tuiles déjà
-      // chargées/cachées peuvent rester visibles même sans réseau.
       freezeOnlineBaseForOffline();
       setOfflineMapStatusVisible(true);
       ui.radarPanel.classList.add('hidden');
@@ -3758,8 +4412,7 @@
   async function handleOnlineReturn() {
     updateOfflineNetworkBadge();
     if (state.offline.activePackage && state.offline.forced) return;
-    deactivateOfflineMap({ restoreOnline:true });
-    toast('Connexion retrouvée : carte en ligne réactivée.');
+    await recoverOnlineMapIfPossible({ silent:false });
   }
 
   function offlineFeatureSummary(features) {
@@ -3959,8 +4612,26 @@
     ui.radarSlider.addEventListener('input', e => showRadarFrame(Number(e.target.value)));
     ui.radarPlay.addEventListener('click', toggleRadarAnimation);
     ui.locateBtn.addEventListener('click', () => startLocation(true));
-    ui.mapLocateBtn.addEventListener('click', e => { e.stopPropagation(); startLocation(true); });
-    ui.mapCloseBtn.addEventListener('click', e => { e.stopPropagation(); if (state.hikeFinder.active) stopHikeFinder(true); exitMapFullscreen(); });
+    ui.mapLocateBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      startLocation(true);
+      ensureOrientationTracking(true).then(() => applyAutomaticHeading()).catch(() => {});
+    });
+    ui.mapCompassBtn?.addEventListener('click', async e => {
+      e.stopPropagation();
+      if (!state.navigation.rotateAvailable) { updateNavigationControls(); return; }
+      if (state.navigation.orientationMode === 'auto') setOrientationMode('north', { notify:true });
+      else {
+        await ensureOrientationTracking(true).catch(() => false);
+        setOrientationMode('auto', { notify:true });
+      }
+    });
+    ui.mapCloseBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      if (state.hikeFinder.active) stopHikeFinder(true);
+      if (state.planner.active) stopPlanner(true);
+      exitMapFullscreen();
+    });
     ui.mapZoomInBtn.addEventListener('click', e => { e.stopPropagation(); state.map.zoomIn(); });
     ui.mapZoomOutBtn.addEventListener('click', e => { e.stopPropagation(); state.map.zoomOut(); });
 
@@ -3996,6 +4667,7 @@
     ui.hikeFinderNewSearchBtn?.addEventListener('click', startHikeFinder);
     ui.hikeFinderCloseBtn?.addEventListener('click', () => { stopHikeFinder(true); exitMapFullscreen(); });
     ui.finderMapDetailClose?.addEventListener('click', closeFinderMapDetail);
+    bindFinderMapDetailSheet();
     ui.finderDetailClose?.addEventListener('click', closeFinderDetailCard);
     ui.finderMapDetail?.querySelector('.finder-detail-actions')?.addEventListener('click', handleFinderDetailAction);
     ui.finderDetailCard?.querySelector('.finder-detail-card-actions')?.addEventListener('click', handleFinderDetailAction);
@@ -4043,6 +4715,11 @@
     });
     ui.hikeFinderResultsList?.addEventListener('click', handleHikeResultAction);
     ui.plannerGpsBtn.addEventListener('click', useGpsAsPlannerStart);
+    ui.plannerCloseBtn?.addEventListener('click', () => {
+      stopPlanner(true);
+      if (state.mapFullscreen) exitMapFullscreen();
+      toast('Création de parcours fermée.');
+    });
     ui.plannerUndoBtn.addEventListener('click', undoPlannerWaypoint);
     ui.plannerClearBtn.addEventListener('click', clearPlanner);
     ui.plannerSaveBtn.addEventListener('click', savePlannerRoute);
@@ -4075,6 +4752,7 @@
     }));
     ui.activityPauseBtn.addEventListener('click', toggleActivityPause);
     ui.activityStopBtn.addEventListener('click', finishActivity);
+    bindActivityPanelSheet();
     ui.activityPanelToggle?.addEventListener('click', (event) => {
       event.stopPropagation();
       toggleActivityPanel();
@@ -4088,7 +4766,7 @@
     });
     ui.activityMapPanel?.querySelector('.activity-map-head')?.addEventListener('click', (event) => {
       if (event.target.closest('button')) return;
-      if (!ui.activityMapPanel.classList.contains('collapsed')) setActivityPanelCollapsed(true);
+      if (!ui.activityMapPanel.classList.contains('collapsed')) { event.stopPropagation(); setActivityPanelCollapsed(true); }
     });
     ui.finishSaveBtn?.addEventListener('click', () => finalizeActivity(true));
     ui.finishDiscardBtn?.addEventListener('click', () => finalizeActivity(false));
@@ -4129,26 +4807,75 @@
 
     // Pull-to-refresh, fermeture d'onglet ou mise en arrière-plan : sauvegarde synchrone
     // de la dernière activité afin qu'un rechargement ne l'efface jamais.
-    window.addEventListener('pagehide', () => persistActivitySnapshot(true));
+    window.addEventListener('pagehide', () => {
+      if (['recording','paused'].includes(state.activity.status) && !readPwaBackgroundSession()) beginPwaBackgroundSession();
+      persistActivitySnapshot(true);
+    });
     window.addEventListener('beforeunload', () => persistActivitySnapshot(true));
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') persistActivitySnapshot(true);
+      if (document.visibilityState === 'hidden') {
+        beginPwaBackgroundSession();
+      } else {
+        setTimeout(() => {
+          resumePwaActivityAfterForeground('visibility');
+          recoverOnlineMapIfPossible({ silent:true }).catch(() => {});
+        }, 80);
+      }
+    });
+    window.addEventListener('pageshow', event => {
+      if (event.persisted && ['recording','paused'].includes(state.activity.status)) {
+        setTimeout(() => resumePwaActivityAfterForeground('pageshow'), 80);
+      }
     });
   }
 
   function registerSW() {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.16', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.32', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
   }
 
-  initMap();
-  bindEvents();
-  bindOfflineEvents();
-  const activityRestored = restoreActivitySnapshot();
-  showAppScreen('map', { scroll: false });
-  renderSavedRoutes();
-  updateActivityUI();
-  if (activityRestored) syncActivityMapPanel();
-  registerSW();
-  if (navigator.onLine) loadRadar(); else setTimeout(handleOfflineNetworkLoss, 250);
-  setTimeout(() => startLocation(true), 400);
+  function loadOptionalRotatePlugin() {
+    if (L?.Map?.prototype && typeof L.Map.prototype.setBearing === 'function') return Promise.resolve(true);
+    if (!navigator.onLine) return Promise.resolve(false);
+    return new Promise(resolve => {
+      let done = false;
+      const finish = ok => { if (done) return; done = true; resolve(!!ok); };
+      const script = document.createElement('script');
+      script.src = 'https://unpkg.com/@tomickigrzegorz/leaflet-rotate@0.2.3/dist/leaflet-rotate.umd.min.js';
+      script.crossOrigin = 'anonymous';
+      script.onload = () => finish(true);
+      script.onerror = () => finish(false);
+      document.head.appendChild(script);
+      setTimeout(() => finish(false), 1200);
+    });
+  }
+
+  async function bootstrap() {
+    // La rotation est un bonus. Après 1,2 s maximum, l'application démarre même
+    // si le CDN est inaccessible : carte, GPS et offline restent prioritaires.
+    await loadOptionalRotatePlugin().catch(() => false);
+    initMap();
+    bindEvents();
+    bindOfflineEvents();
+    const activityRestored = restoreActivitySnapshot();
+    showAppScreen('map', { scroll: false });
+    renderSavedRoutes();
+    updateActivityUI();
+    if (activityRestored) syncActivityMapPanel();
+    registerSW();
+    if (navigator.onLine) {
+      setOfflineMapStatusVisible(false);
+      loadRadar();
+    } else {
+      // Laisse quelques instants au réseau mobile/PWA pour se réattacher avant
+      // d'afficher « Carte hors ligne ».
+      setTimeout(handleOfflineNetworkLoss, 1200);
+    }
+    setTimeout(() => startLocation(true), 120);
+    setTimeout(() => recoverOnlineMapIfPossible({ silent:true }).catch(() => {}), 1800);
+  }
+
+  bootstrap().catch(err => {
+    console.error('Démarrage Rando Radar', err);
+    ui.gpsBadge && (ui.gpsBadge.textContent = 'GPS : erreur démarrage');
+  });
 })();

@@ -107,3 +107,5 @@ V1.10.28 : restaure la continuité GPS des v1.10.16/17 en arrière-plan. Les fix
 V1.10.29 : capture GPS arrière-plan allégée. Les fixes reçus quand la PWA est masquée sont enregistrés et persistés avant tout rendu Leaflet. Retour aux paramètres watchPosition des v1.10.16/17 (maximumAge 2 s, timeout 15 s), ajout d'un pulse getCurrentPosition best-effort toutes les 5 s en arrière-plan et diagnostic du nombre de points réellement récupérés. Si Chrome ne livre aucun point, aucune fausse ligne droite n'est créée au retour.
 
 V1.10.30 : retour au watchPosition simple des v1.10.16/17, suppression du polling GPS parallèle et du redémarrage forcé au retour. Diagnostic arrière-plan persistant, même si Chrome recharge la PWA.
+
+V1.10.31 : correction de version/cache uniquement. Même logique fonctionnelle que V1.10.30 ; numéro visible Infos corrigé et cache PWA rebumpé pour forcer la mise à jour.

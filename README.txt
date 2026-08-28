@@ -99,3 +99,5 @@ V1.10.26 — robustesse GPS PWA
 - Bouton GPS bleu = suivi caméra verrouillé ; glisser la carte = suivi caméra libéré ; retoucher GPS = recentrage/verrouillage.
 - Après orientation automatique, second recentrage de sécurité pour maintenir le point au centre.
 - L'enregistrement de la trace est isolé des erreurs visuelles de la carte.
+
+V1.10.27 : restaure le comportement d'arrière-plan des v1.10.16/17 : le watchPosition existant n'est plus coupé au retour dans la PWA. Les fixes en attente peuvent être livrés ; redémarrage GPS de secours seulement après 8 s sans nouveau fix.

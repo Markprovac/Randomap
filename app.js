@@ -1,4 +1,4 @@
-/* Rando Radar v1.10.26 — GPS PWA robuste : fix, centrage et trace prioritaires */
+/* Rando Radar v1.10.27 — GPS PWA arrière-plan : watcher conservé comme v1.10.16/17 */
 (() => {
   'use strict';
 
@@ -9,6 +9,8 @@
   let activityPersistWarned = false;
   let pwaHiddenAt = 0;
   let lastPwaResumeNoticeAt = 0;
+  let lastGpsCallbackAt = 0;
+  let gpsForegroundFallbackTimer = null;
   let lastInternetProbeAt = 0;
   let lastInternetProbeOk = null;
   let internetProbePromise = null;
@@ -603,6 +605,10 @@
       heading: Number.isFinite(heading) ? normalizeHeading(heading) : null,
       timestamp: pos.timestamp || Date.now()
     };
+    // Heure réelle à laquelle Chrome a livré ce fix au JavaScript. On l'utilise
+    // au retour au premier plan pour conserver le watcher existant (comportement
+    // des v1.10.16/17) au lieu de le couper trop tôt et perdre des fixes en attente.
+    lastGpsCallbackAt = Date.now();
     if (state.location.heading != null) state.navigation.gpsHeading = state.location.heading;
     const ll = [latitude, longitude];
 
@@ -3043,14 +3049,37 @@
   function resumePwaActivityAfterForeground(reason = 'foreground') {
     if (!['recording','paused'].includes(state.activity.status)) return false;
 
-    // Le chrono est calculé depuis startedAt : il récupère donc immédiatement
-    // tout le temps écoulé pendant que Chrome avait gelé la page.
+    // Le chrono est calculé depuis startedAt : il récupère immédiatement
+    // le temps écoulé, même si Chrome a suspendu uniquement les timers d'affichage.
     ensureActivityUiTimer();
     persistActivitySnapshot(true);
 
-    enableGpsMapFollow({ raiseZoom:false });
-    state.centerOnNextLocation = true;
-    startLocation(false, { restart:true });
+    // IMPORTANT — comportement des v1.10.16/17 : ne PAS faire clearWatch() au
+    // retour au premier plan. Android/Chrome peut avoir gardé le watchPosition
+    // vivant ou avoir des fixes en attente. Le couper ici faisait perdre ces points.
+    const watcherWasAlive = state.watchId !== null;
+    if (!watcherWasAlive) startLocation(false);
+
+    // Respecte l'état du bouton GPS : s'il était bleu/verrouillé, le prochain fix
+    // recentre. S'il avait été déverrouillé par un glissement, on laisse la carte libre.
+    if (state.mapFollowGps) state.centerOnNextLocation = true;
+
+    // Secours uniquement : on donne d'abord au watcher existant le temps de livrer
+    // les positions mises en attente. S'il reste réellement muet après 8 s, alors
+    // seulement on le recrée.
+    clearTimeout(gpsForegroundFallbackTimer);
+    const callbackAtForeground = lastGpsCallbackAt;
+    gpsForegroundFallbackTimer = setTimeout(() => {
+      if (document.visibilityState !== 'visible') return;
+      if (!['recording','paused'].includes(state.activity.status)) return;
+      if (state.watchId === null) {
+        startLocation(false);
+        return;
+      }
+      if (lastGpsCallbackAt <= callbackAtForeground) {
+        startLocation(false, { restart:true });
+      }
+    }, 8000);
 
     const hiddenMs = pwaHiddenAt ? Math.max(0, Date.now() - pwaHiddenAt) : 0;
     const now = Date.now();
@@ -3059,8 +3088,10 @@
       if (state.activity.status === 'paused') {
         toast('Activité retrouvée · elle est toujours en pause.');
       } else {
-        setAlert('safe', '↻', 'Activité reprise', 'Compteur réactualisé · suivi GPS relancé.');
-        toast('Activité reprise · GPS relancé.');
+        setAlert('safe', '↻', 'Activité reprise', watcherWasAlive
+          ? 'Compteur réactualisé · suivi GPS maintenu en arrière-plan.'
+          : 'Compteur réactualisé · suivi GPS relancé.');
+        toast(watcherWasAlive ? 'Activité reprise · suivi GPS maintenu.' : 'Activité reprise · GPS relancé.');
       }
     }
     pwaHiddenAt = 0;
@@ -4730,7 +4761,7 @@
   }
 
   function registerSW() {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.26', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.27', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
   }
 
   function loadOptionalRotatePlugin() {

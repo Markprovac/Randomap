@@ -1,4 +1,4 @@
-/* Rando Radar v1.10.31 — comportement GPS v16/17 + diagnostic arrière-plan persistant */
+/* Rando Radar v1.10.30 — comportement GPS v16/17 + diagnostic arrière-plan persistant */
 (() => {
   'use strict';
 
@@ -4830,7 +4830,7 @@
   }
 
   function registerSW() {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.31', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.30', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
   }
 
   function loadOptionalRotatePlugin() {

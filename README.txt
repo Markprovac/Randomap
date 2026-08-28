@@ -101,3 +101,5 @@ V1.10.26 — robustesse GPS PWA
 - L'enregistrement de la trace est isolé des erreurs visuelles de la carte.
 
 V1.10.27 : restaure le comportement d'arrière-plan des v1.10.16/17 : le watchPosition existant n'est plus coupé au retour dans la PWA. Les fixes en attente peuvent être livrés ; redémarrage GPS de secours seulement après 8 s sans nouveau fix.
+
+V1.10.28 : restaure la continuité GPS des v1.10.16/17 en arrière-plan. Les fixes espacés de plus de 20 s sont désormais conservés et reliés au tracé au lieu d'être automatiquement marqués comme une coupure. Le filtre de vitesse plausible reste actif contre les vrais sauts GPS.

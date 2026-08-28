@@ -1,4 +1,4 @@
-/* Rando Radar v1.10.27 — GPS PWA arrière-plan : watcher conservé comme v1.10.16/17 */
+/* Rando Radar v1.10.28 — GPS PWA arrière-plan : points espacés reliés comme v1.10.16/17 */
 (() => {
   'use strict';
 
@@ -3274,15 +3274,12 @@
         return;
       }
 
-      // Après une suspension de Chrome, ne jamais relier deux positions éloignées
-      // par une fausse ligne droite.
-      if (!force && dt > 20 && d > 0.03) {
-        p.breakBefore = true;
-        state.activity.currentSpeed = Number.isFinite(loc.speed) ? Math.max(0, loc.speed) : 0;
-      } else {
-        state.activity.distanceKm += d;
-        state.activity.currentSpeed = Number.isFinite(loc.speed) ? Math.max(0, loc.speed) : computedSpeed;
-      }
+      // Comportement restauré des v1.10.16/17 : Chrome peut continuer à livrer
+      // des fixes GPS plus espacés lorsque la PWA est en arrière-plan. On conserve
+      // et relie ces points au lieu de créer automatiquement une coupure après 20 s.
+      // Le filtre de vitesse plausible ci-dessus reste la protection contre un vrai saut GPS.
+      state.activity.distanceKm += d;
+      state.activity.currentSpeed = Number.isFinite(loc.speed) ? Math.max(0, loc.speed) : computedSpeed;
     } else {
       state.activity.currentSpeed = Number.isFinite(loc.speed) ? Math.max(0, loc.speed) : 0;
     }
@@ -4761,7 +4758,7 @@
   }
 
   function registerSW() {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.27', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.28', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
   }
 
   function loadOptionalRotatePlugin() {

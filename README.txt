@@ -90,3 +90,12 @@ V1.10.25 — correction du point rouge altitude/progression avec carte tournée
 - le marqueur rouge du profil altimétrique utilise maintenant L.marker + divIcon ;
 - le point reste géographiquement collé au tracé même lorsque la carte est orientée/rotée ;
 - même correction pour le point rouge de progression lors du suivi d'un parcours.
+
+
+V1.10.26 — robustesse GPS PWA
+- Une autre application Android utilisant le GPS n'empêche pas la PWA de recevoir sa position.
+- Le statut GPS et le recentrage sont traités dès réception du fix, avant les couches Leaflet secondaires.
+- Le cercle de précision est isolé : une erreur de rendu ne peut plus bloquer le centrage ni la trace.
+- Bouton GPS bleu = suivi caméra verrouillé ; glisser la carte = suivi caméra libéré ; retoucher GPS = recentrage/verrouillage.
+- Après orientation automatique, second recentrage de sécurité pour maintenir le point au centre.
+- L'enregistrement de la trace est isolé des erreurs visuelles de la carte.

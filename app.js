@@ -1,4 +1,4 @@
-/* Rando Radar v1.10.25 — marqueurs altitude/progression alignés avec la rotation */
+/* Rando Radar v1.10.26 — GPS PWA robuste : fix, centrage et trace prioritaires */
 (() => {
   'use strict';
 
@@ -606,30 +606,77 @@
     if (state.location.heading != null) state.navigation.gpsHeading = state.location.heading;
     const ll = [latitude, longitude];
 
-    if (!state.locationMarker) {
-      const icon = L.divIcon({ className: '', html: '<div class="user-dot"></div>', iconSize: [18,18], iconAnchor:[9,9] });
-      state.locationMarker = L.marker(ll, { icon, zIndexOffset: 1000 }).addTo(state.map);
-      state.accuracyCircle = L.circle(ll, { radius: accuracy || 10, weight: 1, fillOpacity: .07, opacity: .35 }).addTo(state.map);
-    } else {
-      state.locationMarker.setLatLng(ll);
-      state.accuracyCircle.setLatLng(ll).setRadius(accuracy || 10);
+    // PRIORITÉ GPS : dès qu'un fix arrive, le statut et la caméra sont mis à jour
+    // AVANT les couches graphiques secondaires. Une erreur Leaflet sur le cercle de
+    // précision ne doit jamais pouvoir laisser « GPS : recherche… », bloquer le
+    // recentrage ou empêcher l'enregistrement de la trace.
+    if (ui.gpsBadge) {
+      ui.gpsBadge.textContent = Number.isFinite(accuracy)
+        ? `GPS : ±${Math.round(accuracy)} m`
+        : 'GPS : position reçue';
     }
+    if (Number.isFinite(altitude) && ui.elevationNow) ui.elevationNow.textContent = `${Math.round(altitude)} m`;
 
-    ui.gpsBadge.textContent = `GPS : ±${Math.round(accuracy || 0)} m`;
-    if (Number.isFinite(altitude)) ui.elevationNow.textContent = `${Math.round(altitude)} m`;
-
-    // Identique à l'APK : si le bouton GPS est bleu, chaque fix recentre.
-    // Si l'utilisateur a déplacé la carte, le GPS continue mais la caméra reste libre.
-    if (state.mapFollowGps || state.centerOnNextLocation) {
-      centerActiveGpsNow(state.centerOnNextLocation);
+    const mustFollow = !!(state.mapFollowGps || state.centerOnNextLocation);
+    const raiseZoom = !!state.centerOnNextLocation;
+    if (mustFollow) {
+      try { centerActiveGpsNow(raiseZoom); } catch (err) { console.warn('Recentrage GPS ignoré', err); }
       state.centerOnNextLocation = false;
     }
-    try { applyAutomaticHeading(); } catch (_) {}
-    updateNavigationControls();
 
-    if (state.activity.status === 'recording') recordActivityPoint(state.location);
-    if (state.activity.followRoute) updateRouteFollowGuide(state.location);
-    if (state.activity.target) updateTargetGuide();
+    // Le point bleu est essentiel, mais son rendu ne doit pas casser la chaîne GPS.
+    try {
+      if (!state.locationMarker) {
+        const icon = L.divIcon({ className: '', html: '<div class="user-dot"></div>', iconSize: [18,18], iconAnchor:[9,9] });
+        state.locationMarker = L.marker(ll, { icon, zIndexOffset: 1000 }).addTo(state.map);
+      } else {
+        state.locationMarker.setLatLng(ll);
+      }
+      state.locationMarker?.bringToFront?.();
+    } catch (err) {
+      console.warn('Affichage du point GPS ignoré', err);
+    }
+
+    // Le cercle de précision est purement décoratif. Avec une carte rotative,
+    // certains rendus Canvas/SVG peuvent échouer : on l'isole complètement.
+    try {
+      if (!state.accuracyCircle) {
+        state.accuracyCircle = L.circle(ll, {
+          radius: Number.isFinite(accuracy) ? Math.max(1, accuracy) : 10,
+          weight: 1, fillOpacity: .07, opacity: .35
+        }).addTo(state.map);
+      } else {
+        state.accuracyCircle.setLatLng(ll).setRadius(Number.isFinite(accuracy) ? Math.max(1, accuracy) : 10);
+      }
+    } catch (err) {
+      console.warn('Cercle de précision GPS ignoré', err);
+      try {
+        if (state.accuracyCircle && state.map?.hasLayer?.(state.accuracyCircle)) state.map.removeLayer(state.accuracyCircle);
+      } catch (_) {}
+      state.accuracyCircle = null;
+    }
+
+    // L'enregistrement doit continuer même si un composant visuel de la carte a un souci.
+    try {
+      if (state.activity.status === 'recording') recordActivityPoint(state.location);
+    } catch (err) { console.warn('Enregistrement point GPS ignoré', err); }
+
+    try { applyAutomaticHeading(); } catch (_) {}
+
+    // La rotation peut modifier la transformation du conteneur Leaflet. Si le suivi
+    // est verrouillé (bouton GPS bleu), on recentre une seconde fois juste après la
+    // rotation afin que le point reste réellement au centre de l'écran.
+    if (mustFollow) {
+      const fixTs = state.location.timestamp;
+      setTimeout(() => {
+        if (!state.mapFollowGps || !state.location || state.location.timestamp !== fixTs) return;
+        try { centerActiveGpsNow(false); } catch (_) {}
+      }, 60);
+    }
+    try { updateNavigationControls(); } catch (_) {}
+
+    try { if (state.activity.followRoute) updateRouteFollowGuide(state.location); } catch (_) {}
+    try { if (state.activity.target) updateTargetGuide(); } catch (_) {}
     if (['recording','paused'].includes(state.activity.status)) persistActivitySnapshot();
     scheduleWeather(latitude, longitude);
 
@@ -4683,7 +4730,7 @@
   }
 
   function registerSW() {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.25', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.26', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
   }
 
   function loadOptionalRotatePlugin() {

@@ -108,4 +108,6 @@ V1.10.29 : capture GPS arrière-plan allégée. Les fixes reçus quand la PWA es
 
 V1.10.30 : retour au watchPosition simple des v1.10.16/17, suppression du polling GPS parallèle et du redémarrage forcé au retour. Diagnostic arrière-plan persistant, même si Chrome recharge la PWA.
 
-V1.10.31 : correction de version/cache uniquement. Même logique fonctionnelle que V1.10.30 ; numéro visible Infos corrigé et cache PWA rebumpé pour forcer la mise à jour.
+V1.10.32 : correction de version/cache uniquement. Même logique fonctionnelle que V1.10.30 ; numéro visible Infos corrigé et cache PWA rebumpé pour forcer la mise à jour.
+
+V1.10.32 : compteur de points GPS visible en permanence dans le panneau d’activité (GPS · N pts · enregistrement), sans modifier le moteur GPS de la V1.10.31.

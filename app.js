@@ -1,4 +1,4 @@
-/* Rando Radar v1.10.31 — comportement GPS v16/17 + diagnostic arrière-plan persistant */
+/* Rando Radar v1.10.32 — comportement GPS v16/17 + compteur de points GPS visible */
 (() => {
   'use strict';
 
@@ -3530,7 +3530,7 @@
     }
 
     ui.activityMapTitle.textContent = `${activityProfile.icon} ${activityProfile.label}`;
-    ui.activityMapStatus.textContent = a.status === 'paused' ? 'EN PAUSE' : 'GPS · enregistrement';
+    ui.activityMapStatus.textContent = a.status === 'paused' ? `EN PAUSE · ${a.points.length} pts` : `GPS · ${a.points.length} pts · enregistrement`;
     ui.activityMapDistance.textContent = distance;
     ui.activityMapTime.textContent = time;
     ui.activityMapSpeed.textContent = speed;
@@ -4830,7 +4830,7 @@
   }
 
   function registerSW() {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.31', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=1.10.32', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
   }
 
   function loadOptionalRotatePlugin() {
